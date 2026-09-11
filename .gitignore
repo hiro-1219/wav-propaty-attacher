@@ -1,0 +1,10 @@
+/dist/
+/build/
+/.cache/
+/*.exe
+*.tmp
+*.log
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
