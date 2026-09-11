@@ -1,10 +1,23 @@
 package workflow
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"wav-property-attacher/internal/domain"
 )
+
+func TestIdentifyRequiresKeyBeforeFingerprintWork(t *testing.T) {
+	controller := NewController("", filepath.Join(t.TempDir(), "missing-fpcalc"))
+	job := &domain.AlbumJob{Tracks: []domain.LocalTrack{{Path: "does-not-need-to-exist.wav"}}}
+	err := controller.Identify(context.Background(), job, "Album", true)
+	if err == nil || !strings.Contains(err.Error(), "AcoustID") {
+		t.Fatalf("expected AcoustID key validation error, got %v", err)
+	}
+}
 
 func TestCommitStageRestoresPreviousFilesOnFailure(t *testing.T) {
 	root := t.TempDir()

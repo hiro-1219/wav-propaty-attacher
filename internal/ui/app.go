@@ -23,10 +23,11 @@ import (
 )
 
 type asyncResult struct {
-	kind string
-	job  *domain.AlbumJob
-	path string
-	err  error
+	kind   string
+	job    *domain.AlbumJob
+	path   string
+	status string
+	err    error
 }
 
 type directoryEntry struct {
@@ -68,6 +69,7 @@ type App struct {
 	job        *domain.AlbumJob
 	status     string
 	busy       bool
+	busyKind   string
 	cancel     context.CancelFunc
 	results    chan asyncResult
 }
@@ -108,7 +110,11 @@ func (a *App) consumeResults() {
 	for {
 		select {
 		case result := <-a.results:
-			a.busy, a.cancel = false, nil
+			if result.kind == "progress" {
+				a.status = result.status
+				continue
+			}
+			a.busy, a.busyKind, a.cancel = false, "", nil
 			if result.err != nil {
 				a.status = "エラー: " + result.err.Error()
 				continue
@@ -170,16 +176,32 @@ func (a *App) handleActions(gtx layout.Context) {
 			return j, "", e
 		})
 	}
-	if a.searchButton.Clicked(gtx) && !a.busy && a.job != nil {
-		controller := workflow.NewController(strings.TrimSpace(a.apiEditor.Text()), strings.TrimSpace(a.fpcalcEditor.Text()))
-		a.controller = controller
-		job := a.job
-		query := a.queryEditor.Text()
-		use := a.useFP.Value
-		a.run("identify", func(ctx context.Context) (*domain.AlbumJob, string, error) {
-			e := controller.Identify(ctx, job, query, use)
-			return job, "", e
-		})
+	if a.searchButton.Clicked(gtx) {
+		switch {
+		case a.busy:
+			a.status = "別の処理が進行中です。完了を待つか、キャンセルしてください。"
+		case a.job == nil || len(a.job.Tracks) == 0:
+			a.status = "エラー: 先に「WAVを読み込む」を実行してください。"
+		case a.useFP.Value && strings.TrimSpace(a.apiEditor.Text()) == "":
+			a.status = "エラー: 音響指紋検索にはAcoustIDアプリケーションキーが必要です。キーを入力するか、指紋送信を無効にしてください。"
+		default:
+			controller := workflow.NewController(strings.TrimSpace(a.apiEditor.Text()), strings.TrimSpace(a.fpcalcEditor.Text()))
+			controller.Progress = func(status string) {
+				select {
+				case a.results <- asyncResult{kind: "progress", status: status}:
+					a.window.Invalidate()
+				default:
+				}
+			}
+			a.controller = controller
+			job := a.job
+			query := a.queryEditor.Text()
+			use := a.useFP.Value
+			a.run("identify", func(ctx context.Context) (*domain.AlbumJob, string, error) {
+				e := controller.Identify(ctx, job, query, use)
+				return job, "", e
+			})
+		}
 	}
 	for i := range a.candidates {
 		if a.candidates[i].Clicked(gtx) && !a.busy {
@@ -238,7 +260,21 @@ func (a *App) run(kind string, work func(context.Context) (*domain.AlbumJob, str
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
 	a.busy = true
-	a.status = "処理中…"
+	a.busyKind = kind
+	switch kind {
+	case "identify":
+		if a.useFP.Value {
+			a.status = "検索中: ローカルで音響指紋を生成し、アルバム候補を照合しています…"
+		} else {
+			a.status = "検索中: MusicBrainzからアルバム候補を取得しています…"
+		}
+	case "scan":
+		a.status = "WAVファイルを読み込んでいます…"
+	case "export":
+		a.status = "AIFFを生成して音声データを検証しています…"
+	default:
+		a.status = "処理中…"
+	}
 	go func() {
 		job, path, err := work(ctx)
 		a.results <- asyncResult{kind: kind, job: job, path: path, err: err}
@@ -247,6 +283,10 @@ func (a *App) run(kind string, work func(context.Context) (*domain.AlbumJob, str
 }
 
 func (a *App) layout(gtx layout.Context) layout.Dimensions {
+	searchLabel := "アルバムを検索"
+	if a.busyKind == "identify" {
+		searchLabel = "検索中…"
+	}
 	inset := layout.Inset{Top: unit.Dp(14), Right: unit.Dp(18), Bottom: unit.Dp(18), Left: unit.Dp(18)}
 	return inset.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		items := []layout.Widget{
@@ -286,7 +326,7 @@ func (a *App) layout(gtx layout.Context) layout.Dimensions {
 				return material.CheckBox(a.theme, &a.useFP, "上記を理解し、音響指紋と再生秒数をAcoustIDへ送信する").Layout(gtx)
 			},
 			func(gtx layout.Context) layout.Dimensions {
-				return buttonRow(gtx, material.Button(a.theme, &a.searchButton, "アルバムを検索"), material.Button(a.theme, &a.cancelButton, "キャンセル"))
+				return buttonRow(gtx, material.Button(a.theme, &a.searchButton, searchLabel), material.Button(a.theme, &a.cancelButton, "キャンセル"))
 			},
 			spacer(10),
 			func(gtx layout.Context) layout.Dimensions {

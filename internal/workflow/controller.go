@@ -25,6 +25,7 @@ type Controller struct {
 	AcoustID      *services.AcoustID
 	MusicBrainz   *services.MusicBrainz
 	CoverArt      *services.CoverArt
+	Progress      func(string)
 }
 
 func NewController(apiKey, fpcalcPath string) *Controller {
@@ -48,6 +49,9 @@ func (c *Controller) Identify(ctx context.Context, job *domain.AlbumJob, query s
 	if job == nil || len(job.Tracks) == 0 {
 		return errors.New("先にWAVフォルダを読み込んでください")
 	}
+	if useFingerprint && strings.TrimSpace(c.AcoustID.APIKey) == "" {
+		return errors.New("音響指紋検索にはAcoustIDアプリケーションキーが必要です。キーを入力するか、指紋送信を無効にしてください")
+	}
 	releaseVotes := map[string]int{}
 	if useFingerprint {
 		seenRecordings := map[string]bool{}
@@ -55,6 +59,7 @@ func (c *Controller) Identify(ctx context.Context, job *domain.AlbumJob, query s
 			if err := ctx.Err(); err != nil {
 				return err
 			}
+			c.report(fmt.Sprintf("検索中: 音響指紋を生成しています（%d/%d） %s", i+1, len(job.Tracks), job.Tracks[i].Relative))
 			fp, err := c.Fingerprinter.Calculate(ctx, job.Tracks[i].Path)
 			if err != nil {
 				continue
@@ -98,6 +103,7 @@ func (c *Controller) Identify(ctx context.Context, job *domain.AlbumJob, query s
 		if strings.TrimSpace(query) == "" {
 			query = filepath.Base(filepath.Clean(job.Root))
 		}
+		c.report("検索中: MusicBrainzを文字検索しています…")
 		var err error
 		ids, err = c.MusicBrainz.Search(ctx, "release:"+quoteLucene(query), 10)
 		if err != nil {
@@ -110,11 +116,12 @@ func (c *Controller) Identify(ctx context.Context, job *domain.AlbumJob, query s
 
 	seen := map[string]bool{}
 	var releases []domain.Release
-	for _, id := range ids {
+	for index, id := range ids {
 		if seen[id] {
 			continue
 		}
 		seen[id] = true
+		c.report(fmt.Sprintf("検索中: アルバム候補の詳細を取得しています（%d/%d）", index+1, len(ids)))
 		release, err := c.MusicBrainz.Lookup(ctx, id)
 		if err == nil && len(release.Tracks) > 0 {
 			releases = append(releases, release)
@@ -133,6 +140,12 @@ func (c *Controller) Identify(ctx context.Context, job *domain.AlbumJob, query s
 		}
 	}
 	return nil
+}
+
+func (c *Controller) report(message string) {
+	if c.Progress != nil {
+		c.Progress(message)
+	}
 }
 
 func (c *Controller) SelectCandidate(ctx context.Context, job *domain.AlbumJob, index int) error {
