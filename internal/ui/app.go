@@ -150,8 +150,12 @@ func (a *App) handleActions(gtx layout.Context) {
 	}
 	for i := range a.dirs {
 		if a.dirs[i].btn.Clicked(gtx) {
-			a.dirPath = a.dirs[i].path
+			// refreshDirs replaces a.dirs. Stop iterating the old index range
+			// immediately; the new directory can contain fewer entries.
+			next := a.dirs[i].path
+			a.dirPath = next
 			a.refreshDirs()
+			break
 		}
 	}
 	if a.chooseButton.Clicked(gtx) && a.showDirs {
