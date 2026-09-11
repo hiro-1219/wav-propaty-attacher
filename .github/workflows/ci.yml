@@ -1,0 +1,83 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache: true
+      - name: Install Gio Linux dependencies
+        if: runner.os == 'Linux'
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          pkg-config gcc
+          libwayland-dev libx11-dev libx11-xcb-dev
+          libxkbcommon-dev libxkbcommon-x11-dev
+          libgles2-mesa-dev libegl1-mesa-dev libffi-dev
+          libvulkan-dev libxcursor-dev libxrandr-dev
+          libxinerama-dev libxi-dev libxxf86vm-dev
+      - run: go test ./...
+      - run: go vet ./...
+      - name: Build
+        shell: bash
+        run: |
+          mkdir -p dist
+          suffix=""
+          if [ "${{ runner.os }}" = "Windows" ]; then suffix=".exe"; fi
+          go build -trimpath -ldflags "-s -w" -o "dist/wav-property-attacher${suffix}" ./cmd/wav-property-attacher
+      - name: Bundle fpcalc (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/acoustid/chromaprint/releases/download/v1.6.1/chromaprint-fpcalc-1.6.1-windows-x86_64.zip'
+          $archive = Join-Path $env:RUNNER_TEMP 'fpcalc.zip'
+          $unpack = Join-Path $env:RUNNER_TEMP 'fpcalc-windows'
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          $expected = '735d6182b38e9f364b84ce6f4ccd682c75e2851de89735711d6b762d12b92a4e'
+          if ($actual -ne $expected) { throw "fpcalc checksum mismatch: $actual" }
+          Expand-Archive -LiteralPath $archive -DestinationPath $unpack
+          New-Item -ItemType Directory -Force dist/tools | Out-Null
+          Copy-Item (Get-ChildItem $unpack -Recurse -Filter fpcalc.exe | Select-Object -First 1).FullName dist/tools/fpcalc.exe
+      - name: Bundle fpcalc (macOS/Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            asset="chromaprint-fpcalc-1.6.1-macos-universal.tar.gz"
+            expected="240aeb5a8c8205af458e3625cb7487b826b711a999e491ef00111f3cebd76f00"
+          else
+            asset="chromaprint-fpcalc-1.6.1-linux-x86_64.tar.gz"
+            expected="fc16cd37a70168040bc9ceb45f1d4d1216f5a75bc4c9cf8564bea70ac6a45733"
+          fi
+          archive="$RUNNER_TEMP/$asset"
+          curl --fail --location --retry 3 \
+            "https://github.com/acoustid/chromaprint/releases/download/v1.6.1/$asset" \
+            --output "$archive"
+          actual="$(shasum -a 256 "$archive" | cut -d ' ' -f 1)"
+          test "$actual" = "$expected"
+          mkdir -p "$RUNNER_TEMP/fpcalc" dist/tools
+          tar -xzf "$archive" -C "$RUNNER_TEMP/fpcalc"
+          find "$RUNNER_TEMP/fpcalc" -type f -name fpcalc -exec cp {} dist/tools/fpcalc \;
+          chmod +x dist/tools/fpcalc
+      - name: Add notices
+        shell: bash
+        run: |
+          mkdir -p dist/licenses
+          cp LICENSE THIRD_PARTY_NOTICES.md dist/licenses/
+          cp third_party/chromaprint-LICENSE.md dist/licenses/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wav-property-attacher-${{ runner.os }}-${{ runner.arch }}
+          path: dist/
