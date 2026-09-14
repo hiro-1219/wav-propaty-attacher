@@ -1,7 +1,7 @@
 # WAV Property Attacher
 
 WAVアルバムをMusicBrainz / AcoustIDで識別し、rekordbox 7向けの
-ID3v2.3タグ付きAIFFコピーを生成するGo/Gioデスクトップアプリです。
+ID3v2.3タグ付きAIFFコピーを生成するGo/Fyneデスクトップアプリです。
 元のWAVファイルは変更しません。
 
 ## プライバシー
@@ -29,14 +29,17 @@ rekordbox互換出力の対象外として安全に拒否します。
 ## 開発ビルド
 
 ```powershell
+$env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
+$env:CGO_ENABLED = "1"
 go mod download
 go test ./...
-go build -o build/wav-property-attacher.exe ./cmd/wav-property-attacher
+go build -buildvcs=false -o build/wav-property-attacher.exe ./cmd/wav-property-attacher
 ```
 
-LinuxではGioのビルドにWayland/X11、XKB、EGL/Vulkan開発パッケージが
-必要です。詳細は[Gioのインストール手順](https://gioui.org/doc/install/linux)を
-参照してください。
+FyneのデスクトップビルドはCGOを使用します。WindowsではGCCを含む
+MSYS2 UCRT64、LinuxではGCC、OpenGL、X11/Wayland開発パッケージが必要です。
+本環境では既存の`C:\msys64\ucrt64\bin\gcc.exe`を使用します。
+詳細は[Fyneの導入手順](https://docs.fyne.io/started/)を参照してください。
 
 ### fpcalc
 
@@ -60,9 +63,9 @@ https://acoustid.org/new-application
 
 1. アルバムフォルダを選択して「WAVを読み込む」を押します。
 2. 必要ならAcoustIDキーを入力し、説明を確認して指紋送信を有効にします。
-3. 「アルバムを検索」を押し、Release候補と曲割当を確認します。割当行を
-   クリックすると別トラックへの割当、出力除外、未割当へ順に切り替えられます。
-4. 必要ならローカルJPEG/PNGを指定します。
+3. 「アルバムを検索」を押し、Release候補と曲割当を確認します。曲ごとの
+   セレクトボックスで、別トラックへの割当、出力除外、未割当を指定できます。
+4. ジャケットのプレビューを確認し、必要ならローカルJPEG/PNGを選択します。
 5. 「rekordbox用AIFFを生成」を押します。
 6. 作成された`rekordbox`フォルダをrekordbox 7のCollectionへドラッグします。
 

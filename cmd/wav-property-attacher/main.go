@@ -1,23 +1,16 @@
 package main
 
 import (
-	"log"
-	"os"
-
-	"gioui.org/app"
-	"gioui.org/unit"
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
 
 	appui "wav-property-attacher/internal/ui"
 )
 
 func main() {
-	go func() {
-		window := new(app.Window)
-		window.Option(app.Title("WAV Property Attacher"), app.Size(unit.Dp(920), unit.Dp(760)))
-		if err := appui.New(window).Run(); err != nil {
-			log.Print(err)
-		}
-		os.Exit(0)
-	}()
-	app.Main()
+	application := app.NewWithID("io.github.hiro-1219.wav-property-attacher")
+	window := application.NewWindow("WAV Property Attacher")
+	window.Resize(fyne.NewSize(960, 800))
+	appui.New(window)
+	window.ShowAndRun()
 }

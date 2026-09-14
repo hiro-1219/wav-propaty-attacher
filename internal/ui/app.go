@@ -1,464 +1,470 @@
 package ui
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"image/color"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
-	"gioui.org/app"
-	"gioui.org/layout"
-	"gioui.org/op"
-	"gioui.org/text"
-	"gioui.org/unit"
-	"gioui.org/widget"
-	"gioui.org/widget/material"
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/storage"
+	"fyne.io/fyne/v2/widget"
 
 	"wav-property-attacher/internal/domain"
 	"wav-property-attacher/internal/services"
 	"wav-property-attacher/internal/workflow"
 )
 
-type asyncResult struct {
-	kind   string
-	job    *domain.AlbumJob
-	path   string
-	status string
-	err    error
-}
-
-type directoryEntry struct {
-	name string
-	path string
-	up   bool
-	btn  widget.Clickable
-}
-
 type App struct {
-	window *app.Window
-	theme  *material.Theme
-	ops    op.Ops
+	window fyne.Window
 
-	pathEditor   widget.Editor
-	queryEditor  widget.Editor
-	apiEditor    widget.Editor
-	fpcalcEditor widget.Editor
-	coverEditor  widget.Editor
-	useFP        widget.Bool
+	pathEntry   *widget.Entry
+	queryEntry  *widget.Entry
+	apiEntry    *widget.Entry
+	fpcalcEntry *widget.Entry
+	coverEntry  *widget.Entry
+	useFP       *widget.Check
 
-	browseButton widget.Clickable
-	scanButton   widget.Clickable
-	searchButton widget.Clickable
-	coverButton  widget.Clickable
-	exportButton widget.Clickable
-	cancelButton widget.Clickable
-	chooseButton widget.Clickable
-	candidates   []widget.Clickable
-	assignments  []widget.Clickable
+	statusLabel   *widget.Label
+	trackLabel    *widget.Label
+	coverLabel    *widget.Label
+	coverImage    *canvas.Image
+	candidateBox  *fyne.Container
+	assignmentBox *fyne.Container
 
-	pageList layout.List
-	dirList  layout.List
-	showDirs bool
-	dirPath  string
-	dirs     []directoryEntry
+	browseButton *widget.Button
+	scanButton   *widget.Button
+	searchButton *widget.Button
+	coverButton  *widget.Button
+	exportButton *widget.Button
+	cancelButton *widget.Button
 
-	controller *workflow.Controller
-	job        *domain.AlbumJob
-	status     string
-	busy       bool
-	busyKind   string
-	cancel     context.CancelFunc
-	results    chan asyncResult
+	candidateButtons  []*widget.Button
+	assignmentSelects []*widget.Select
+	controller        *workflow.Controller
+	job               *domain.AlbumJob
+	busy              bool
+	busyKind          string
+	cancel            context.CancelFunc
 }
 
-func New(window *app.Window) *App {
-	a := &App{window: window, theme: material.NewTheme(), results: make(chan asyncResult, 8), status: "アルバムフォルダを選択してください。"}
-	a.pageList.Axis = layout.Vertical
-	a.dirList.Axis = layout.Vertical
-	a.pathEditor.SingleLine, a.queryEditor.SingleLine, a.apiEditor.SingleLine = true, true, true
-	a.fpcalcEditor.SingleLine, a.coverEditor.SingleLine = true, true
-	a.pathEditor.SetText(defaultMusicPath())
-	a.fpcalcEditor.SetText(workflowFPPath())
-	// Fingerprints disclose the musical identity of the local audio. Require an
-	// explicit opt-in for each application session.
-	a.useFP.Value = false
+func New(window fyne.Window) *App {
+	a := &App{window: window}
+	a.pathEntry = widget.NewEntry()
+	a.pathEntry.SetText(defaultMusicPath())
+	a.pathEntry.SetPlaceHolder(`C:\Music\Album`)
+	a.queryEntry = widget.NewEntry()
+	a.queryEntry.SetPlaceHolder("アルバム名 / アーティスト（空欄ならフォルダ名）")
+	a.apiEntry = widget.NewPasswordEntry()
+	a.apiEntry.SetPlaceHolder("文字検索だけなら空欄可")
+	a.fpcalcEntry = widget.NewEntry()
+	a.fpcalcEntry.SetText(services.DefaultFPCalcPath())
+	a.coverEntry = widget.NewEntry()
+	a.coverEntry.SetPlaceHolder("JPEG / PNG")
+	a.useFP = widget.NewCheck("音響指紋と再生秒数をAcoustIDへ送信することに同意する", nil)
+	a.statusLabel = widget.NewLabel("アルバムフォルダを選択してください。")
+	a.statusLabel.Wrapping = fyne.TextWrapWord
+	a.trackLabel = widget.NewLabel("WAVはまだ読み込まれていません。")
+	a.coverLabel = widget.NewLabel("ジャケット: 未取得")
+	a.coverImage = &canvas.Image{FillMode: canvas.ImageFillContain}
+	a.coverImage.SetMinSize(fyne.NewSize(220, 220))
+	a.candidateBox = container.NewVBox(widget.NewLabel("検索後にアルバム候補が表示されます。"))
+	a.assignmentBox = container.NewVBox(widget.NewLabel("アルバム候補を選択すると曲割当が表示されます。"))
+
+	a.browseButton = widget.NewButton("フォルダを選択", a.chooseFolder)
+	a.scanButton = widget.NewButton("WAVを読み込む", a.scan)
+	a.searchButton = widget.NewButton("アルバムを検索", a.search)
+	a.coverButton = widget.NewButton("画像を選択", a.chooseCover)
+	a.exportButton = widget.NewButton("rekordbox用AIFFを生成", a.export)
+	a.cancelButton = widget.NewButton("キャンセル", a.cancelWork)
+	a.cancelButton.Disable()
+
+	privacy := widget.NewLabel("音源ファイルはアップロードしません。指紋検索を有効にした場合のみ、端末内で生成した音響指紋と再生秒数をAcoustIDへ送信します。")
+	privacy.Wrapping = fyne.TextWrapWord
+
+	folderRow := container.NewBorder(nil, nil, nil, a.browseButton, a.pathEntry)
+	coverRow := container.NewBorder(nil, nil, nil, a.coverButton, a.coverEntry)
+	settings := widget.NewForm(
+		widget.NewFormItem("アルバムフォルダ", folderRow),
+		widget.NewFormItem("検索語", a.queryEntry),
+		widget.NewFormItem("AcoustIDキー", a.apiEntry),
+		widget.NewFormItem("fpcalc", a.fpcalcEntry),
+		widget.NewFormItem("ローカルジャケット", coverRow),
+	)
+	coverPanel := container.NewVBox(a.coverImage, a.coverLabel)
+	results := container.NewGridWithColumns(2,
+		widget.NewCard("アルバム候補", "候補を選択してください", a.candidateBox),
+		widget.NewCard("ジャケット", "AIFFへ埋め込まれる画像", coverPanel),
+	)
+	content := container.NewVBox(
+		widget.NewLabelWithStyle("WAV Property Attacher", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
+		privacy,
+		widget.NewSeparator(),
+		settings,
+		a.useFP,
+		container.NewHBox(a.scanButton, a.searchButton, a.cancelButton),
+		a.statusLabel,
+		a.trackLabel,
+		widget.NewSeparator(),
+		results,
+		widget.NewCard("曲の割当", "各WAVに対応するMusicBrainzトラックを確認・変更できます", a.assignmentBox),
+		container.NewCenter(a.exportButton),
+	)
+	scroll := container.NewVScroll(content)
+	scroll.SetMinSize(fyne.NewSize(860, 680))
+	window.SetContent(scroll)
 	return a
 }
 
-func (a *App) Run() error {
-	for {
-		switch e := a.window.Event().(type) {
-		case app.DestroyEvent:
-			if a.cancel != nil {
-				a.cancel()
-			}
-			return e.Err
-		case app.FrameEvent:
-			a.consumeResults()
-			gtx := app.NewContext(&a.ops, e)
-			a.handleActions(gtx)
-			a.layout(gtx)
-			e.Frame(gtx.Ops)
-		}
+func (a *App) chooseFolder() {
+	if a.busy {
+		a.setStatus("別の処理が進行中です。完了を待つか、キャンセルしてください。", false)
+		return
 	}
-}
-
-func (a *App) consumeResults() {
-	for {
-		select {
-		case result := <-a.results:
-			if result.kind == "progress" {
-				a.status = result.status
-				continue
-			}
-			a.busy, a.busyKind, a.cancel = false, "", nil
-			if result.err != nil {
-				a.status = "エラー: " + result.err.Error()
-				continue
-			}
-			if result.job != nil {
-				a.job = result.job
-			}
-			switch result.kind {
-			case "scan":
-				a.status = fmt.Sprintf("%d曲を読み込みました。検索条件を確認してください。", len(a.job.Tracks))
-			case "identify":
-				a.candidates = make([]widget.Clickable, len(a.job.Candidates))
-				a.assignments = make([]widget.Clickable, len(a.job.Assignments))
-				a.status = fmt.Sprintf("%d件のアルバム候補を取得しました。内容を確認してください。", len(a.job.Candidates))
-			case "select":
-				a.assignments = make([]widget.Clickable, len(a.job.Assignments))
-				a.status = "候補と曲割当を更新しました。"
-			case "cover":
-				a.status = "ローカル画像をジャケットに設定しました。"
-			case "export":
-				a.status = "AIFFの生成が完了しました: " + result.path
-			}
-		default:
+	picker := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
+		if err != nil {
+			a.setStatus("フォルダを開けません: "+err.Error(), true)
 			return
 		}
-	}
+		if uri != nil {
+			a.pathEntry.SetText(pathFromURI(uri))
+		}
+	}, a.window)
+	picker.Show()
 }
 
-func (a *App) handleActions(gtx layout.Context) {
-	if a.browseButton.Clicked(gtx) && !a.busy {
-		a.showDirs = !a.showDirs
-		if a.showDirs {
-			a.dirPath = strings.TrimSpace(a.pathEditor.Text())
-			if a.dirPath == "" {
-				a.dirPath = defaultMusicPath()
+func (a *App) chooseCover() {
+	if a.busy {
+		a.setStatus("別の処理が進行中です。完了を待つか、キャンセルしてください。", false)
+		return
+	}
+	picker := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+		if err != nil {
+			a.setStatus("画像を開けません: "+err.Error(), true)
+			return
+		}
+		if reader == nil {
+			return
+		}
+		path := pathFromURI(reader.URI())
+		_ = reader.Close()
+		a.coverEntry.SetText(path)
+		a.loadCover(path)
+	}, a.window)
+	picker.SetFilter(storage.NewExtensionFileFilter([]string{".jpg", ".jpeg", ".png"}))
+	picker.Show()
+}
+
+func (a *App) scan() {
+	if !a.ready() {
+		return
+	}
+	controller := a.newController()
+	root := strings.TrimSpace(a.pathEntry.Text)
+	a.run("scan", func(ctx context.Context) (*domain.AlbumJob, string, error) {
+		job, err := controller.Scan(ctx, root)
+		return job, "", err
+	})
+}
+
+func (a *App) search() {
+	if !a.ready() {
+		return
+	}
+	if a.job == nil || len(a.job.Tracks) == 0 {
+		a.setStatus("先に「WAVを読み込む」を実行してください。", true)
+		return
+	}
+	if a.useFP.Checked && strings.TrimSpace(a.apiEntry.Text) == "" {
+		a.setStatus("音響指紋検索にはAcoustIDアプリケーションキーが必要です。キーを入力するか、指紋送信を無効にしてください。", true)
+		return
+	}
+	controller := a.newController()
+	job, query, useFP := a.job, a.queryEntry.Text, a.useFP.Checked
+	a.run("identify", func(ctx context.Context) (*domain.AlbumJob, string, error) {
+		err := controller.Identify(ctx, job, query, useFP)
+		return job, "", err
+	})
+}
+
+func (a *App) selectCandidate(index int) {
+	if !a.ready() || a.job == nil || index < 0 || index >= len(a.job.Candidates) {
+		return
+	}
+	controller := a.controller
+	if controller == nil {
+		controller = a.newController()
+	}
+	job := a.job
+	a.run("select", func(ctx context.Context) (*domain.AlbumJob, string, error) {
+		err := controller.SelectCandidate(ctx, job, index)
+		return job, "", err
+	})
+}
+
+func (a *App) loadCover(path string) {
+	if a.job == nil {
+		a.setStatus("先にアルバムを検索してください。", true)
+		return
+	}
+	controller := a.controller
+	if controller == nil {
+		controller = a.newController()
+	}
+	job := a.job
+	a.run("cover", func(context.Context) (*domain.AlbumJob, string, error) {
+		err := controller.LoadLocalCover(path, job)
+		return job, "", err
+	})
+}
+
+func (a *App) export() {
+	if !a.ready() {
+		return
+	}
+	if a.job == nil || a.job.Selected < 0 {
+		a.setStatus("先にアルバム候補を選択してください。", true)
+		return
+	}
+	controller := a.controller
+	if controller == nil {
+		controller = a.newController()
+	}
+	job := a.job
+	a.run("export", func(ctx context.Context) (*domain.AlbumJob, string, error) {
+		path, err := controller.Export(ctx, job)
+		return job, path, err
+	})
+}
+
+func (a *App) newController() *workflow.Controller {
+	controller := workflow.NewController(strings.TrimSpace(a.apiEntry.Text), strings.TrimSpace(a.fpcalcEntry.Text))
+	controller.Progress = func(message string) {
+		fyne.Do(func() {
+			if a.busy {
+				a.setStatus(message, false)
 			}
-			a.refreshDirs()
-		}
-	}
-	for i := range a.dirs {
-		if a.dirs[i].btn.Clicked(gtx) {
-			// refreshDirs replaces a.dirs. Stop iterating the old index range
-			// immediately; the new directory can contain fewer entries.
-			next := a.dirs[i].path
-			a.dirPath = next
-			a.refreshDirs()
-			break
-		}
-	}
-	if a.chooseButton.Clicked(gtx) && a.showDirs {
-		a.pathEditor.SetText(a.dirPath)
-		a.showDirs = false
-	}
-	if a.scanButton.Clicked(gtx) && !a.busy {
-		controller := workflow.NewController(strings.TrimSpace(a.apiEditor.Text()), strings.TrimSpace(a.fpcalcEditor.Text()))
-		a.controller = controller
-		a.run("scan", func(ctx context.Context) (*domain.AlbumJob, string, error) {
-			j, e := controller.Scan(ctx, a.pathEditor.Text())
-			return j, "", e
 		})
 	}
-	if a.searchButton.Clicked(gtx) {
-		switch {
-		case a.busy:
-			a.status = "別の処理が進行中です。完了を待つか、キャンセルしてください。"
-		case a.job == nil || len(a.job.Tracks) == 0:
-			a.status = "エラー: 先に「WAVを読み込む」を実行してください。"
-		case a.useFP.Value && strings.TrimSpace(a.apiEditor.Text()) == "":
-			a.status = "エラー: 音響指紋検索にはAcoustIDアプリケーションキーが必要です。キーを入力するか、指紋送信を無効にしてください。"
-		default:
-			controller := workflow.NewController(strings.TrimSpace(a.apiEditor.Text()), strings.TrimSpace(a.fpcalcEditor.Text()))
-			controller.Progress = func(status string) {
-				select {
-				case a.results <- asyncResult{kind: "progress", status: status}:
-					a.window.Invalidate()
-				default:
-				}
-			}
-			a.controller = controller
-			job := a.job
-			query := a.queryEditor.Text()
-			use := a.useFP.Value
-			a.run("identify", func(ctx context.Context) (*domain.AlbumJob, string, error) {
-				e := controller.Identify(ctx, job, query, use)
-				return job, "", e
-			})
-		}
-	}
-	for i := range a.candidates {
-		if a.candidates[i].Clicked(gtx) && !a.busy {
-			idx := i
-			job := a.job
-			controller := a.controller
-			a.run("select", func(ctx context.Context) (*domain.AlbumJob, string, error) {
-				e := controller.SelectCandidate(ctx, job, idx)
-				return job, "", e
-			})
-		}
-	}
-	if a.job != nil && a.job.Selected >= 0 && a.job.Selected < len(a.job.Candidates) {
-		releaseTrackCount := len(a.job.Candidates[a.job.Selected].Tracks)
-		for i := range a.assignments {
-			if a.assignments[i].Clicked(gtx) && i < len(a.job.Assignments) {
-				assignment := &a.job.Assignments[i]
-				switch {
-				case assignment.Excluded:
-					assignment.Excluded = false
-					assignment.ReleaseIndex = -1
-				case assignment.ReleaseIndex+1 < releaseTrackCount:
-					assignment.ReleaseIndex++
-				default:
-					assignment.ReleaseIndex = -1
-					assignment.Excluded = true
-				}
-				a.status = "曲割当を手動で変更しました。未割当の曲がある場合は再度クリックしてください。"
-			}
-		}
-	}
-	if a.coverButton.Clicked(gtx) && !a.busy && a.job != nil {
-		job := a.job
-		path := a.coverEditor.Text()
-		controller := a.controller
-		a.run("cover", func(context.Context) (*domain.AlbumJob, string, error) {
-			e := controller.LoadLocalCover(path, job)
-			return job, "", e
-		})
-	}
-	if a.exportButton.Clicked(gtx) && !a.busy && a.job != nil {
-		job := a.job
-		controller := a.controller
-		a.run("export", func(ctx context.Context) (*domain.AlbumJob, string, error) {
-			path, e := controller.Export(ctx, job)
-			return job, path, e
-		})
-	}
-	if a.cancelButton.Clicked(gtx) && a.busy && a.cancel != nil {
-		a.cancel()
-		a.status = "キャンセルしています…"
-	}
+	a.controller = controller
+	return controller
 }
 
 func (a *App) run(kind string, work func(context.Context) (*domain.AlbumJob, string, error)) {
 	ctx, cancel := context.WithCancel(context.Background())
-	a.cancel = cancel
-	a.busy = true
-	a.busyKind = kind
+	a.cancel, a.busy, a.busyKind = cancel, true, kind
+	a.setBusy(true)
 	switch kind {
-	case "identify":
-		if a.useFP.Value {
-			a.status = "検索中: ローカルで音響指紋を生成し、アルバム候補を照合しています…"
-		} else {
-			a.status = "検索中: MusicBrainzからアルバム候補を取得しています…"
-		}
 	case "scan":
-		a.status = "WAVファイルを読み込んでいます…"
+		a.setStatus("WAVファイルを読み込んでいます…", false)
+	case "identify":
+		a.setStatus("アルバムを検索しています…", false)
+	case "select":
+		a.setStatus("選択したアルバムの詳細とジャケットを取得しています…", false)
+	case "cover":
+		a.setStatus("ジャケット画像を読み込んでいます…", false)
 	case "export":
-		a.status = "AIFFを生成して音声データを検証しています…"
-	default:
-		a.status = "処理中…"
+		a.setStatus("AIFFを生成して音声データを検証しています…", false)
 	}
 	go func() {
 		job, path, err := work(ctx)
-		a.results <- asyncResult{kind: kind, job: job, path: path, err: err}
-		a.window.Invalidate()
+		fyne.Do(func() { a.finish(kind, job, path, err) })
 	}()
 }
 
-func (a *App) layout(gtx layout.Context) layout.Dimensions {
-	searchLabel := "アルバムを検索"
-	if a.busyKind == "identify" {
-		searchLabel = "検索中…"
-	}
-	inset := layout.Inset{Top: unit.Dp(14), Right: unit.Dp(18), Bottom: unit.Dp(18), Left: unit.Dp(18)}
-	return inset.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		items := []layout.Widget{
-			func(gtx layout.Context) layout.Dimensions {
-				title := material.H4(a.theme, "WAV Property Attacher")
-				title.Alignment = text.Middle
-				return title.Layout(gtx)
-			},
-			spacer(8),
-			func(gtx layout.Context) layout.Dimensions {
-				body := material.Body2(a.theme, "音源はアップロードしません。指紋検索を有効にした場合のみ、端末内で生成した音響指紋と再生秒数をAcoustIDへ送信します。")
-				body.Color = color.NRGBA{R: 55, G: 65, B: 81, A: 255}
-				return body.Layout(gtx)
-			},
-			spacer(12),
-			func(gtx layout.Context) layout.Dimensions {
-				return labeledEditor(gtx, a.theme, "アルバムフォルダ", &a.pathEditor, "C:\\Music\\Album")
-			},
-			func(gtx layout.Context) layout.Dimensions {
-				return buttonRow(gtx, material.Button(a.theme, &a.browseButton, "フォルダを参照"), material.Button(a.theme, &a.scanButton, "WAVを読み込む"))
-			},
-		}
-		if a.showDirs {
-			items = append(items, a.layoutDirectoryBrowser)
-		}
-		items = append(items,
-			func(gtx layout.Context) layout.Dimensions {
-				return labeledEditor(gtx, a.theme, "検索語（空欄ならフォルダ名）", &a.queryEditor, "アルバム名 / アーティスト")
-			},
-			func(gtx layout.Context) layout.Dimensions {
-				return labeledEditor(gtx, a.theme, "AcoustIDアプリケーションキー", &a.apiEditor, "文字検索だけなら空欄可")
-			},
-			func(gtx layout.Context) layout.Dimensions {
-				return labeledEditor(gtx, a.theme, "fpcalcのパス", &a.fpcalcEditor, "tools/fpcalc")
-			},
-			func(gtx layout.Context) layout.Dimensions {
-				return material.CheckBox(a.theme, &a.useFP, "上記を理解し、音響指紋と再生秒数をAcoustIDへ送信する").Layout(gtx)
-			},
-			func(gtx layout.Context) layout.Dimensions {
-				return buttonRow(gtx, material.Button(a.theme, &a.searchButton, searchLabel), material.Button(a.theme, &a.cancelButton, "キャンセル"))
-			},
-			spacer(10),
-			func(gtx layout.Context) layout.Dimensions {
-				label := material.Body1(a.theme, a.status)
-				if strings.HasPrefix(a.status, "エラー") {
-					label.Color = color.NRGBA{R: 180, G: 25, B: 35, A: 255}
-				}
-				return label.Layout(gtx)
-			},
-		)
-		if a.job != nil {
-			items = append(items, a.layoutJob)
-		}
-		return a.pageList.Layout(gtx, len(items), func(gtx layout.Context, index int) layout.Dimensions {
-			return layout.Inset{Bottom: unit.Dp(7)}.Layout(gtx, items[index])
-		})
-	})
-}
-
-func (a *App) layoutDirectoryBrowser(gtx layout.Context) layout.Dimensions {
-	return layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			layout.Rigid(material.Body1(a.theme, "参照中: "+a.dirPath).Layout),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints.Max.Y = gtx.Dp(unit.Dp(180))
-				return a.dirList.Layout(gtx, len(a.dirs), func(gtx layout.Context, i int) layout.Dimensions {
-					return material.Button(a.theme, &a.dirs[i].btn, a.dirs[i].name).Layout(gtx)
-				})
-			}),
-			layout.Rigid(material.Button(a.theme, &a.chooseButton, "このフォルダを選択").Layout),
-		)
-	})
-}
-
-func (a *App) layoutJob(gtx layout.Context) layout.Dimensions {
-	widgets := []layout.Widget{func(gtx layout.Context) layout.Dimensions {
-		return material.H6(a.theme, fmt.Sprintf("読み込み済み: %d曲", len(a.job.Tracks))).Layout(gtx)
-	}}
-	for i := range a.job.Candidates {
-		idx := i
-		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-			r := a.job.Candidates[idx]
-			prefix := "○"
-			if a.job.Selected == idx {
-				prefix = "●"
-			}
-			return material.Button(a.theme, &a.candidates[idx], fmt.Sprintf("%s %.0f%%  %s — %s (%s, %d曲)", prefix, r.Score*100, r.Title, r.AlbumArtist, r.Date, len(r.Tracks))).Layout(gtx)
-		})
-	}
-	if a.job.Selected >= 0 && a.job.Selected < len(a.job.Candidates) {
-		r := a.job.Candidates[a.job.Selected]
-		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions { return material.H6(a.theme, "曲の割当").Layout(gtx) })
-		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-			return material.Caption(a.theme, "各行をクリックすると、割当候補 → 除外 → 未割当の順で変更できます。").Layout(gtx)
-		})
-		for i := range a.job.Assignments {
-			assignmentIndex := i
-			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-				assignment := a.job.Assignments[assignmentIndex]
-				local := a.job.Tracks[assignment.LocalIndex]
-				target := "未割当"
-				if assignment.Excluded {
-					target = "出力から除外"
-				} else if assignment.ReleaseIndex >= 0 && assignment.ReleaseIndex < len(r.Tracks) {
-					remote := r.Tracks[assignment.ReleaseIndex]
-					target = fmt.Sprintf("Disc %d-%02d  %s — %s", remote.Disc, remote.Position, remote.Title, remote.Artist)
-				}
-				return material.Button(a.theme, &a.assignments[assignmentIndex], local.Relative+"  →  "+target).Layout(gtx)
-			})
-		}
-	}
-	widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-		return labeledEditor(gtx, a.theme, "ローカルジャケット（任意）", &a.coverEditor, "JPEG / PNG")
-	}, func(gtx layout.Context) layout.Dimensions {
-		return buttonRow(gtx, material.Button(a.theme, &a.coverButton, "画像を使用"), material.Button(a.theme, &a.exportButton, "rekordbox用AIFFを生成"))
-	})
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, funcsToChildren(widgets)...)
-}
-
-func (a *App) refreshDirs() {
-	entries, err := os.ReadDir(a.dirPath)
+func (a *App) finish(kind string, job *domain.AlbumJob, path string, err error) {
+	a.busy, a.busyKind, a.cancel = false, "", nil
+	a.setBusy(false)
 	if err != nil {
-		a.status = "フォルダを開けません: " + err.Error()
+		if errors.Is(err, context.Canceled) {
+			a.setStatus("処理をキャンセルしました。", false)
+		} else {
+			a.setStatus(err.Error(), true)
+		}
 		return
 	}
-	a.dirPath, _ = filepath.Abs(a.dirPath)
-	dirs := []directoryEntry{}
-	parent := filepath.Dir(a.dirPath)
-	if parent != a.dirPath {
-		dirs = append(dirs, directoryEntry{name: "..", path: parent, up: true})
+	if job != nil {
+		a.job = job
 	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			dirs = append(dirs, directoryEntry{name: entry.Name(), path: filepath.Join(a.dirPath, entry.Name())})
-		}
+	switch kind {
+	case "scan":
+		a.trackLabel.SetText(fmt.Sprintf("読み込み済み: %d曲", len(a.job.Tracks)))
+		a.candidateBox.Objects = []fyne.CanvasObject{widget.NewLabel("「アルバムを検索」を押してください。")}
+		a.candidateBox.Refresh()
+		a.assignmentBox.Objects = []fyne.CanvasObject{widget.NewLabel("検索後に曲割当が表示されます。")}
+		a.assignmentBox.Refresh()
+		a.setStatus(fmt.Sprintf("%d曲を読み込みました。検索条件を確認してください。", len(a.job.Tracks)), false)
+	case "identify":
+		a.rebuildCandidates()
+		a.rebuildAssignments()
+		a.refreshCover()
+		a.setStatus(fmt.Sprintf("%d件のアルバム候補を取得しました。内容を確認してください。", len(a.job.Candidates)), false)
+	case "select":
+		a.rebuildCandidates()
+		a.rebuildAssignments()
+		a.refreshCover()
+		a.setStatus("候補、曲割当、ジャケットを更新しました。", false)
+	case "cover":
+		a.refreshCover()
+		a.setStatus("ローカル画像をジャケットに設定しました。", false)
+	case "export":
+		a.setStatus("AIFFの生成が完了しました: "+path, false)
 	}
-	sort.Slice(dirs, func(i, j int) bool {
-		if dirs[i].up {
-			return true
-		}
-		if dirs[j].up {
-			return false
-		}
-		return strings.ToLower(dirs[i].name) < strings.ToLower(dirs[j].name)
-	})
-	a.dirs = dirs
 }
 
-func labeledEditor(gtx layout.Context, theme *material.Theme, label string, editor *widget.Editor, hint string) layout.Dimensions {
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rigid(material.Caption(theme, label).Layout), layout.Rigid(material.Editor(theme, editor, hint).Layout))
-}
-func buttonRow(gtx layout.Context, buttons ...material.ButtonStyle) layout.Dimensions {
-	children := make([]layout.FlexChild, 0, len(buttons))
-	for i := range buttons {
-		button := buttons[i]
-		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, button.Layout)
-		}))
+func (a *App) rebuildCandidates() {
+	if a.job == nil || len(a.job.Candidates) == 0 {
+		a.candidateBox.Objects = []fyne.CanvasObject{widget.NewLabel("アルバム候補がありません。")}
+		a.candidateBox.Refresh()
+		return
 	}
-	return layout.Flex{}.Layout(gtx, children...)
-}
-func spacer(dp float32) layout.Widget {
-	return func(gtx layout.Context) layout.Dimensions { return layout.Spacer{Height: unit.Dp(dp)}.Layout(gtx) }
-}
-func funcsToChildren(w []layout.Widget) []layout.FlexChild {
-	out := make([]layout.FlexChild, 0, len(w))
-	for _, fn := range w {
-		f := fn
-		out = append(out, layout.Rigid(func(gtx layout.Context) layout.Dimensions { return layout.Inset{Bottom: unit.Dp(5)}.Layout(gtx, f) }))
+	objects := make([]fyne.CanvasObject, 0, len(a.job.Candidates))
+	a.candidateButtons = make([]*widget.Button, 0, len(a.job.Candidates))
+	for i, release := range a.job.Candidates {
+		index := i
+		prefix := "○"
+		if a.job.Selected == i {
+			prefix = "●"
+		}
+		label := fmt.Sprintf("%s %.0f%%  %s — %s\n%s / %d曲", prefix, release.Score*100, release.Title, release.AlbumArtist, release.Date, len(release.Tracks))
+		button := widget.NewButton(label, func() { a.selectCandidate(index) })
+		a.candidateButtons = append(a.candidateButtons, button)
+		objects = append(objects, button)
 	}
-	return out
+	a.candidateBox.Objects = objects
+	a.candidateBox.Refresh()
 }
+
+func (a *App) rebuildAssignments() {
+	if a.job == nil || a.job.Selected < 0 || a.job.Selected >= len(a.job.Candidates) {
+		return
+	}
+	release := a.job.Candidates[a.job.Selected]
+	objects := make([]fyne.CanvasObject, 0, len(a.job.Assignments))
+	a.assignmentSelects = make([]*widget.Select, 0, len(a.job.Assignments))
+	for assignmentIndex := range a.job.Assignments {
+		index := assignmentIndex
+		assignment := a.job.Assignments[index]
+		local := a.job.Tracks[assignment.LocalIndex]
+		options := []string{"未割当", "出力から除外"}
+		for _, track := range release.Tracks {
+			options = append(options, fmt.Sprintf("Disc %d-%02d  %s — %s", track.Disc, track.Position, track.Title, track.Artist))
+		}
+		selected := "未割当"
+		if assignment.Excluded {
+			selected = "出力から除外"
+		} else if assignment.ReleaseIndex >= 0 && assignment.ReleaseIndex < len(release.Tracks) {
+			selected = options[assignment.ReleaseIndex+2]
+		}
+		selectWidget := widget.NewSelect(options, func(value string) {
+			current := &a.job.Assignments[index]
+			switch value {
+			case "未割当":
+				current.ReleaseIndex, current.Excluded = -1, false
+			case "出力から除外":
+				current.ReleaseIndex, current.Excluded = -1, true
+			default:
+				for optionIndex, option := range options[2:] {
+					if option == value {
+						current.ReleaseIndex, current.Excluded = optionIndex, false
+						break
+					}
+				}
+			}
+			a.setStatus("曲割当を手動で変更しました。", false)
+		})
+		selectWidget.SetSelected(selected)
+		a.assignmentSelects = append(a.assignmentSelects, selectWidget)
+		objects = append(objects, widget.NewForm(widget.NewFormItem(local.Relative, selectWidget)))
+	}
+	a.assignmentBox.Objects = objects
+	a.assignmentBox.Refresh()
+}
+
+func (a *App) refreshCover() {
+	if a.job == nil || len(a.job.Cover) == 0 {
+		a.coverImage.Image = nil
+		a.coverImage.Refresh()
+		a.coverLabel.SetText("ジャケット: 未取得（ローカル画像を選択できます）")
+		return
+	}
+	decoded, _, err := image.Decode(bytes.NewReader(a.job.Cover))
+	if err != nil {
+		a.coverLabel.SetText("ジャケットをプレビューできません: " + err.Error())
+		return
+	}
+	a.coverImage.Image = decoded
+	a.coverImage.Refresh()
+	a.coverLabel.SetText(fmt.Sprintf("ジャケット: %s / %d KiB", a.job.CoverMIME, (len(a.job.Cover)+1023)/1024))
+}
+
+func (a *App) setBusy(busy bool) {
+	buttons := []*widget.Button{a.browseButton, a.scanButton, a.searchButton, a.coverButton, a.exportButton}
+	buttons = append(buttons, a.candidateButtons...)
+	for _, button := range buttons {
+		if busy {
+			button.Disable()
+		} else {
+			button.Enable()
+		}
+	}
+	for _, assignment := range a.assignmentSelects {
+		if busy {
+			assignment.Disable()
+		} else {
+			assignment.Enable()
+		}
+	}
+	if busy {
+		a.cancelButton.Enable()
+	} else {
+		a.cancelButton.Disable()
+	}
+	if a.busyKind == "identify" {
+		a.searchButton.SetText("検索中…")
+	} else {
+		a.searchButton.SetText("アルバムを検索")
+	}
+}
+
+func (a *App) cancelWork() {
+	if a.cancel != nil {
+		a.cancel()
+		a.setStatus("キャンセルしています…", false)
+	}
+}
+
+func (a *App) ready() bool {
+	if a.busy {
+		a.setStatus("別の処理が進行中です。完了を待つか、キャンセルしてください。", false)
+		return false
+	}
+	return true
+}
+
+func (a *App) setStatus(message string, isError bool) {
+	if isError {
+		message = "エラー: " + message
+	}
+	a.statusLabel.SetText(message)
+}
+
+func pathFromURI(uri fyne.URI) string {
+	if uri == nil {
+		return ""
+	}
+	return filepath.FromSlash(uri.Path())
+}
+
 func defaultMusicPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -470,4 +476,3 @@ func defaultMusicPath() string {
 	}
 	return home
 }
-func workflowFPPath() string { return services.DefaultFPCalcPath() }

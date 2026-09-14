@@ -1,29 +1,32 @@
 package ui
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
+
+	"fyne.io/fyne/v2/storage"
+	fynetest "fyne.io/fyne/v2/test"
 )
 
-func TestRefreshDirsSupportsJapanesePaths(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "日本語のアルバム")
-	child := filepath.Join(root, "ディスク一")
-	if err := os.MkdirAll(child, 0o755); err != nil {
-		t.Fatal(err)
+func TestNewBuildsFyneInterface(t *testing.T) {
+	application := fynetest.NewApp()
+	defer application.Quit()
+	window := application.NewWindow("test")
+	defer window.Close()
+
+	ui := New(window)
+	if window.Content() == nil || ui.searchButton == nil || ui.coverImage == nil {
+		t.Fatal("Fyne interface was not fully constructed")
 	}
-	a := &App{dirPath: root}
-	a.refreshDirs()
-	if a.status != "" {
-		t.Fatalf("refresh failed: %s", a.status)
+	if ui.useFP.Checked {
+		t.Fatal("fingerprint disclosure consent must default to disabled")
 	}
-	found := false
-	for _, entry := range a.dirs {
-		if entry.name == "ディスク一" && entry.path == child {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("Japanese directory missing from entries: %+v", a.dirs)
+}
+
+func TestPathFromURISupportsJapanesePaths(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "日本語のアルバム", "ディスク一")
+	uri := storage.NewFileURI(path)
+	if got := pathFromURI(uri); got != path {
+		t.Fatalf("path=%q, want %q", got, path)
 	}
 }

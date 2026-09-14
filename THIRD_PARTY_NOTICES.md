@@ -1,13 +1,15 @@
 # Third-party notices
 
-This application uses Gio (`gioui.org`) under the MIT/Unlicense terms.
+This application uses Fyne (`fyne.io/fyne/v2`) under the BSD 3-Clause
+license. Fyne's transitive dependencies retain their respective licenses.
 
 Release packages include the unmodified Chromaprint 1.6.1 `fpcalc` executable
 as a separate program. Chromaprint and the FFmpeg components used by the
 official build retain their respective licenses. The upstream license notice
 is included in `licenses/chromaprint-LICENSE.md`.
 
-- Gio: https://gioui.org/
+- Fyne: https://fyne.io/
+- Fyne source and license: https://github.com/fyne-io/fyne
 - Chromaprint 1.6.1 source: https://github.com/acoustid/chromaprint/tree/v1.6.1
 - Chromaprint releases: https://github.com/acoustid/chromaprint/releases/tag/v1.6.1
 - GNU LGPL 2.1: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
