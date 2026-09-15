@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WAV Property Attacher</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app-shell">
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">W</div>
+        <div>
+          <h1>WAV Property Attacher</h1>
+          <p>アルバムを見つけて、rekordbox用AIFFへ安全に変換</p>
+        </div>
+      </div>
+      <div class="privacy-pill"><span class="privacy-dot"></span>音源ファイルは送信しません</div>
+    </header>
+
+    <main class="workspace">
+      <section class="panel source-panel" aria-labelledby="source-title">
+        <div class="panel-heading">
+          <span class="step">1</span>
+          <div><h2 id="source-title">アルバムを指定</h2><p>フォルダを読み込み、検索方法を選びます</p></div>
+        </div>
+
+        <button id="album-drop" class="drop-zone" type="button" data-action="choose-folder">
+          <span class="drop-icon">↓</span>
+          <strong>アルバムフォルダをドロップ</strong>
+          <small>またはクリックして選択</small>
+        </button>
+        <div id="album-path" class="path-value" title="未選択">未選択</div>
+
+        <label class="field-label" for="query">検索語 <span>省略可</span></label>
+        <input id="query" type="text" placeholder="アルバム名 / アーティスト名">
+
+        <details class="advanced">
+          <summary>音響指紋検索の設定</summary>
+          <div class="advanced-body">
+            <label class="field-label" for="api-key">AcoustIDアプリケーションキー</label>
+            <input id="api-key" type="password" autocomplete="off" placeholder="文字検索だけなら不要">
+            <label class="field-label" for="fpcalc-path">fpcalc</label>
+            <input id="fpcalc-path" type="text">
+            <label class="check-row"><input id="use-fingerprint" type="checkbox"> 指紋と再生秒数の送信に同意する</label>
+            <p class="help">指紋は端末内で生成します。WAVそのものはアップロードされません。</p>
+          </div>
+        </details>
+
+        <div class="button-row">
+          <button id="scan-button" class="button secondary" data-action="scan">WAVを読み込む</button>
+          <button id="search-button" class="button primary" data-action="search">アルバムを検索</button>
+        </div>
+        <div class="scan-summary">
+          <span id="track-count" class="metric">0</span>
+          <span>tracks loaded</span>
+        </div>
+      </section>
+
+      <section class="panel match-panel" aria-labelledby="match-title">
+        <div class="panel-heading compact">
+          <span class="step">2</span>
+          <div><h2 id="match-title">候補と曲割当</h2><p>候補を選び、対応する曲を確認します</p></div>
+        </div>
+        <div class="match-grid">
+          <div class="candidate-section">
+            <div class="section-label">アルバム候補 <span id="candidate-count" class="count-badge">0</span></div>
+            <div id="candidate-list" class="candidate-list empty-state">
+              <p>検索すると候補がここに表示されます</p>
+            </div>
+          </div>
+          <div class="mapping-section">
+            <div class="section-label">曲の割当 <span class="muted">自動割当後に変更できます</span></div>
+            <div class="mapping-header"><span>ローカルWAV</span><span>MusicBrainzトラック</span></div>
+            <div id="mapping-list" class="mapping-list empty-state">
+              <p>アルバム候補を選択してください</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="panel output-panel" aria-labelledby="output-title">
+        <div class="panel-heading compact">
+          <span class="step">3</span>
+          <div><h2 id="output-title">ジャケットと出力</h2><p>画像を確認してAIFFを生成します</p></div>
+        </div>
+
+        <button id="cover-drop" class="cover-drop" type="button" data-action="choose-cover">
+          <img id="cover-image" alt="アルバムジャケット" hidden>
+          <div id="cover-placeholder" class="cover-placeholder">
+            <span class="image-icon">▧</span>
+            <strong>ジャケット画像</strong>
+            <small>JPEG / PNGをドロップ<br>またはクリックして選択</small>
+          </div>
+        </button>
+        <div id="cover-info" class="cover-info">自動取得またはローカル画像</div>
+
+        <div class="output-summary">
+          <div><span>形式</span><strong>AIFF + ID3v2.3</strong></div>
+          <div><span>保存先</span><strong>rekordbox/</strong></div>
+          <div><span>元WAV</span><strong class="safe-text">変更しない</strong></div>
+        </div>
+
+        <button id="export-button" class="button export" data-action="export" disabled>
+          <span>rekordbox用AIFFを生成</span>
+          <small>音声ハッシュを検証して保存</small>
+        </button>
+      </aside>
+    </main>
+
+    <footer class="status-bar">
+      <div id="status-indicator" class="status-indicator ready"></div>
+      <div id="status-text" class="status-text">準備完了。アルバムフォルダを指定してください。</div>
+      <button id="cancel-button" class="cancel-button" data-action="cancel" disabled>キャンセル</button>
+    </footer>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

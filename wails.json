@@ -1,0 +1,18 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "wav-property-attacher",
+  "outputfilename": "wav-property-attacher",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dev:watcher": "",
+  "author": {
+    "name": "hiro-1219"
+  },
+  "info": {
+    "companyName": "hiro-1219",
+    "productName": "WAV Property Attacher",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright 2026 hiro-1219",
+    "comments": "Attach album metadata and artwork for rekordbox"
+  }
+}
