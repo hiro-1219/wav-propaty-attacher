@@ -5,6 +5,7 @@ const state = {
   busy: false,
   root: "",
   showAllEditions: false,
+  audioIndex: -1,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -176,14 +177,17 @@ function renderMappings() {
     const local = state.job.tracks[assignment.localIndex];
     const row = document.createElement("div");
     row.className = "mapping-row";
-    const info = document.createElement("div");
-    info.className = "local-track";
+    const info = document.createElement("button");
+    info.type = "button";
+    info.className = "local-track track-picker" + (assignment.localIndex === state.audioIndex ? " selected" : "");
+    info.title = "クリックしてプレビュー再生する曲を選択";
     const name = document.createElement("strong");
     name.textContent = assignment.localName;
     name.title = assignment.localName;
     const hint = document.createElement("small");
     hint.textContent = `Disc ${local.discHint} / Track ${local.trackHint} · ${local.duration}`;
     info.append(name, hint);
+    info.addEventListener("click", () => selectAudioTrack(assignment.localIndex));
 
     const select = document.createElement("select");
     select.dataset.action = "assignment";
@@ -213,6 +217,85 @@ function renderMappings() {
   });
 }
 
+function playbackTime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const rounded = Math.floor(seconds);
+  return `${Math.floor(rounded / 60)}:${String(rounded % 60).padStart(2, "0")}`;
+}
+
+function updatePlayerTime() {
+  const duration = elements.audioPlayer.duration;
+  const current = elements.audioPlayer.currentTime;
+  elements.currentTime.textContent = playbackTime(current);
+  elements.totalTime.textContent = Number.isFinite(duration) ? playbackTime(duration) : "0:00";
+  elements.seekBar.value = Number.isFinite(duration) && duration > 0 ? String(Math.round(current / duration * 1000)) : "0";
+}
+
+function resetPlayer() {
+  if (!elements.audioPlayer) return;
+  elements.audioPlayer.pause();
+  elements.audioPlayer.removeAttribute("src");
+  elements.audioPlayer.load();
+  state.audioIndex = -1;
+  elements.playerTitle.textContent = "曲を選択してください";
+  elements.playerSubtitle.textContent = "曲名をクリックすると再生準備します";
+  elements.playButton.textContent = "▶";
+  elements.playButton.disabled = true;
+  elements.stopButton.disabled = true;
+  elements.seekBar.disabled = true;
+  elements.seekBar.value = "0";
+  elements.currentTime.textContent = "0:00";
+  elements.totalTime.textContent = "0:00";
+}
+
+async function selectAudioTrack(index) {
+  try {
+    const source = await backend().GetAudioSource(index);
+    elements.audioPlayer.pause();
+    state.audioIndex = index;
+    elements.audioPlayer.src = source.url;
+    elements.audioPlayer.load();
+    elements.playerTitle.textContent = source.name;
+    elements.playerTitle.title = source.name;
+    elements.playerSubtitle.textContent = `ローカルWAV · ${source.duration}`;
+    elements.playButton.textContent = "▶";
+    elements.playButton.disabled = false;
+    elements.stopButton.disabled = false;
+    elements.seekBar.disabled = false;
+    elements.currentTime.textContent = "0:00";
+    elements.totalTime.textContent = source.duration;
+    renderMappings();
+    setStatus(`${source.name} を再生対象に選択しました。`, "ready");
+  } catch (error) {
+    setStatus(errorMessage(error), "error");
+  }
+}
+
+async function togglePlayback() {
+  if (state.audioIndex < 0) return;
+  if (elements.audioPlayer.paused) {
+    try {
+      await elements.audioPlayer.play();
+      elements.playButton.textContent = "❚❚";
+      elements.playerSubtitle.textContent = "再生中";
+    } catch (error) {
+      setStatus(`再生できませんでした: ${errorMessage(error)}`, "error");
+    }
+  } else {
+    elements.audioPlayer.pause();
+    elements.playButton.textContent = "▶";
+    elements.playerSubtitle.textContent = "一時停止中";
+  }
+}
+
+function stopPlayback() {
+  elements.audioPlayer.pause();
+  elements.audioPlayer.currentTime = 0;
+  elements.playButton.textContent = "▶";
+  elements.playerSubtitle.textContent = "停止中";
+  updatePlayerTime();
+}
+
 function addOption(select, value, text) {
   const option = document.createElement("option");
   option.value = value;
@@ -237,6 +320,7 @@ async function chooseFolder() {
   try {
     const path = await backend().ChooseFolder();
     if (path) {
+      resetPlayer();
       state.root = path;
       elements.albumPath.textContent = path;
       elements.albumPath.title = path;
@@ -252,6 +336,7 @@ async function scan() {
     setStatus("アルバムフォルダを指定してください。", "error");
     return;
   }
+  resetPlayer();
   await runTask("WAVファイルを読み込んでいます…", () => backend().Scan(settings()), (job) => `${job.tracks.length}曲を読み込みました。アルバムを検索してください。`);
 }
 
@@ -343,6 +428,9 @@ async function initialise() {
     coverDrop: $("cover-drop"), coverImage: $("cover-image"), coverPlaceholder: $("cover-placeholder"),
     coverInfo: $("cover-info"), exportButton: $("export-button"), cancelButton: $("cancel-button"),
     statusText: $("status-text"), statusIndicator: $("status-indicator"),
+    audioPlayer: $("audio-player"), playButton: $("play-button"), stopButton: $("stop-button"),
+    playerTitle: $("player-title"), playerSubtitle: $("player-subtitle"), seekBar: $("seek-bar"),
+    currentTime: $("current-time"), totalTime: $("total-time"),
   });
 
   elements.albumDrop.addEventListener("click", chooseFolder);
@@ -354,6 +442,27 @@ async function initialise() {
   elements.cancelButton.addEventListener("click", async () => {
     await backend().Cancel();
     setStatus("キャンセルしています…", "busy");
+  });
+  elements.playButton.addEventListener("click", togglePlayback);
+  elements.stopButton.addEventListener("click", stopPlayback);
+  elements.seekBar.addEventListener("input", () => {
+    const duration = elements.audioPlayer.duration;
+    if (Number.isFinite(duration) && duration > 0) {
+      elements.audioPlayer.currentTime = Number(elements.seekBar.value) / 1000 * duration;
+    }
+  });
+  elements.audioPlayer.addEventListener("timeupdate", updatePlayerTime);
+  elements.audioPlayer.addEventListener("loadedmetadata", updatePlayerTime);
+  elements.audioPlayer.addEventListener("pause", () => {
+    if (!elements.audioPlayer.ended) elements.playButton.textContent = "▶";
+  });
+  elements.audioPlayer.addEventListener("ended", () => {
+    elements.playButton.textContent = "▶";
+    elements.playerSubtitle.textContent = "再生終了";
+    updatePlayerTime();
+  });
+  elements.audioPlayer.addEventListener("error", () => {
+    if (elements.audioPlayer.getAttribute("src")) setStatus("WAVを再生できませんでした。ファイルを確認してください。", "error");
   });
 
   const defaults = await backend().GetDefaults();

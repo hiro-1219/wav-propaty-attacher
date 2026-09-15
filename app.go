@@ -5,8 +5,11 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +34,12 @@ type Settings struct {
 type Defaults struct {
 	MusicPath  string `json:"musicPath"`
 	FPCalcPath string `json:"fpcalcPath"`
+}
+
+type AudioSource struct {
+	URL      string `json:"url"`
+	Name     string `json:"name"`
+	Duration string `json:"duration"`
 }
 
 type TrackView struct {
@@ -160,6 +169,75 @@ func (a *App) ResolveCoverDrop(path string) (string, error) {
 	default:
 		return "", errors.New("JPEGまたはPNG画像をドロップしてください")
 	}
+}
+
+func (a *App) GetAudioSource(index int) (AudioSource, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.job == nil || index < 0 || index >= len(a.job.Tracks) {
+		return AudioSource{}, errors.New("再生する曲を選択してください")
+	}
+	track := a.job.Tracks[index]
+	version := track.AudioSHA256
+	if len(version) > 16 {
+		version = version[:16]
+	}
+	return AudioSource{
+		URL:      "/local-audio/" + strconv.Itoa(index) + "?v=" + url.QueryEscape(version),
+		Name:     track.Relative,
+		Duration: durationText(track.Duration),
+	}, nil
+}
+
+func (a *App) audioMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		const prefix = "/local-audio/"
+		if !strings.HasPrefix(r.URL.Path, prefix) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		index, err := strconv.Atoi(strings.TrimPrefix(r.URL.Path, prefix))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		a.mu.Lock()
+		if a.job == nil || index < 0 || index >= len(a.job.Tracks) {
+			a.mu.Unlock()
+			http.NotFound(w, r)
+			return
+		}
+		path := a.job.Tracks[index].Path
+		name := filepath.Base(path)
+		version := a.job.Tracks[index].AudioSHA256
+		if len(version) > 16 {
+			version = version[:16]
+		}
+		a.mu.Unlock()
+		if version != "" && r.URL.Query().Get("v") != version {
+			http.NotFound(w, r)
+			return
+		}
+
+		file, err := os.Open(path)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer file.Close()
+		info, err := file.Stat()
+		if err != nil || !info.Mode().IsRegular() {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "audio/wav")
+		w.Header().Set("Cache-Control", "no-store")
+		http.ServeContent(w, r, name, info.ModTime(), file)
+	})
 }
 
 func (a *App) Scan(settings Settings) (JobView, error) {

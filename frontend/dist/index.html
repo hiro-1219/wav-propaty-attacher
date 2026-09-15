@@ -125,6 +125,19 @@
       </aside>
     </main>
 
+    <section class="player-bar" aria-label="WAVプレビュー再生">
+      <button id="play-button" class="player-button primary-control" type="button" aria-label="再生または一時停止" disabled>▶</button>
+      <button id="stop-button" class="player-button" type="button" aria-label="停止" disabled>■</button>
+      <div class="player-track">
+        <strong id="player-title">曲を選択してください</strong>
+        <small id="player-subtitle">曲名をクリックすると再生準備します</small>
+      </div>
+      <span id="current-time" class="player-time">0:00</span>
+      <input id="seek-bar" class="seek-bar" type="range" min="0" max="1000" value="0" aria-label="再生位置" disabled>
+      <span id="total-time" class="player-time">0:00</span>
+      <audio id="audio-player" preload="metadata"></audio>
+    </section>
+
     <footer class="status-bar">
       <div id="status-indicator" class="status-indicator ready"></div>
       <div id="status-text" class="status-text">準備完了。アルバムフォルダを指定してください。</div>

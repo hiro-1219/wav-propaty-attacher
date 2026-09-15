@@ -22,7 +22,7 @@ func main() {
 		MinWidth:                 1080,
 		MinHeight:                680,
 		BackgroundColour:         &options.RGBA{R: 12, G: 18, B: 28, A: 255},
-		AssetServer:              &assetserver.Options{Assets: assets},
+		AssetServer:              &assetserver.Options{Assets: assets, Middleware: application.audioMiddleware},
 		OnStartup:                application.startup,
 		OnShutdown:               application.shutdown,
 		EnableDefaultContextMenu: true,
