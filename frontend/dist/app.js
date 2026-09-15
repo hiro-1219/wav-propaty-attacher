@@ -6,6 +6,7 @@ const state = {
   root: "",
   showAllEditions: false,
   audioIndex: -1,
+  coverPreloads: new Map(),
 };
 
 const $ = (id) => document.getElementById(id);
@@ -85,10 +86,23 @@ function applyJob(job) {
     elements.year.value = job.suggestedYear || "";
     state.showAllEditions = false;
   }
+  preloadCandidateCovers(job.candidates || []);
   renderCandidates();
   renderMappings();
   renderCover();
   updateExportState();
+}
+
+function preloadCandidateCovers(candidates) {
+  candidates.forEach((candidate) => {
+    const source = candidate.coverThumbnail;
+    if (!source || state.coverPreloads.has(source)) return;
+    const image = new Image();
+    image.referrerPolicy = "no-referrer";
+    image.decoding = "async";
+    image.src = source;
+    state.coverPreloads.set(source, image);
+  });
 }
 
 function renderCandidates() {
@@ -131,7 +145,7 @@ function renderCandidates() {
     coverPlaceholder.textContent = "♪";
     const cover = document.createElement("img");
     cover.alt = `${candidate.title || "アルバム"}のジャケット`;
-    cover.loading = "lazy";
+    cover.loading = "eager";
     cover.decoding = "async";
     cover.referrerPolicy = "no-referrer";
     cover.hidden = true;
@@ -360,6 +374,7 @@ async function scan() {
     return;
   }
   resetPlayer();
+  state.coverPreloads.clear();
   await runTask("WAVファイルを読み込んでいます…", () => backend().Scan(settings()), (job) => `${job.tracks.length}曲を読み込みました。アルバムを検索してください。`);
 }
 
