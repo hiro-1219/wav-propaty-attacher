@@ -52,6 +52,28 @@ func TestMusicBrainzQueriesEscapeLuceneAndUseStructure(t *testing.T) {
 	}
 }
 
+func TestArtistOnlyCriteriaIsNotReplacedBySuggestedAlbum(t *testing.T) {
+	criteria := fillCriteria(domain.SearchCriteria{Artist: "Artist Only"}, domain.SearchCriteria{AlbumTitle: "Suggested Album", Artist: "Suggested Artist", Year: "2024"})
+	if criteria.AlbumTitle != "" || criteria.Artist != "Artist Only" || criteria.Year != "" {
+		t.Fatalf("criteria=%+v", criteria)
+	}
+}
+
+func TestMusicBrainzQueriesSupportArtistOnlySearch(t *testing.T) {
+	queries := musicBrainzQueries(domain.SearchCriteria{Artist: "宇多田ヒカル"}, 12)
+	if len(queries) != 3 {
+		t.Fatalf("queries=%v", queries)
+	}
+	if !strings.Contains(queries[0], `artist:"宇多田ヒカル"`) || !strings.Contains(queries[0], "tracks:12") {
+		t.Fatalf("strict query=%q", queries[0])
+	}
+	for _, query := range queries {
+		if strings.Contains(query, "release:") {
+			t.Fatalf("artist-only query contains release field: %q", query)
+		}
+	}
+}
+
 func TestSampleTrackIndicesCoversAlbum(t *testing.T) {
 	tracks := make([]domain.LocalTrack, 10)
 	indices := sampleTrackIndices(tracks, 3)

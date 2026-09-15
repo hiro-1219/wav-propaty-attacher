@@ -48,3 +48,15 @@ func TestTrackTitlesImproveCandidateScore(t *testing.T) {
 		t.Fatalf("matching=%f other=%f", good, bad)
 	}
 }
+
+func TestArtistOnlySearchRanksMatchingArtistHigher(t *testing.T) {
+	locals := []domain.LocalTrack{{Duration: 180 * time.Second}}
+	criteria := domain.SearchCriteria{Artist: "検索アーティスト"}
+	matching := domain.Release{Title: "Any Album", AlbumArtist: "検索アーティスト", Tracks: []domain.ReleaseTrack{{LengthMS: 180000}}}
+	other := domain.Release{Title: "Any Album", AlbumArtist: "別アーティスト", Tracks: []domain.ReleaseTrack{{LengthMS: 180000}}}
+	good, _ := ScoreAndAssignWithCriteria(criteria, locals, matching)
+	bad, _ := ScoreAndAssignWithCriteria(criteria, locals, other)
+	if good <= bad {
+		t.Fatalf("matching=%f other=%f", good, bad)
+	}
+}

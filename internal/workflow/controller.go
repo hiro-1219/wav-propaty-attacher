@@ -60,7 +60,7 @@ func (c *Controller) Identify(ctx context.Context, job *domain.AlbumJob, criteri
 		return errors.New("先にWAVフォルダを読み込んでください")
 	}
 	criteria = fillCriteria(criteria, job.Suggested)
-	if criteria.AlbumTitle == "" {
+	if criteria.AlbumTitle == "" && criteria.Artist == "" {
 		criteria.AlbumTitle = filepath.Base(filepath.Clean(job.Root))
 	}
 	if useFingerprint && strings.TrimSpace(c.AcoustID.APIKey) == "" {
@@ -120,18 +120,16 @@ func (c *Controller) Identify(ctx context.Context, job *domain.AlbumJob, criteri
 }
 
 func fillCriteria(value, fallback domain.SearchCriteria) domain.SearchCriteria {
-	if strings.TrimSpace(value.AlbumTitle) == "" {
-		value.AlbumTitle = fallback.AlbumTitle
-	}
-	if strings.TrimSpace(value.Artist) == "" {
-		value.Artist = fallback.Artist
-	}
-	if strings.TrimSpace(value.Year) == "" {
-		value.Year = fallback.Year
-	}
 	value.AlbumTitle = strings.TrimSpace(value.AlbumTitle)
 	value.Artist = strings.TrimSpace(value.Artist)
 	value.Year = strings.TrimSpace(value.Year)
+	if value.AlbumTitle == "" && value.Artist == "" {
+		value.AlbumTitle = strings.TrimSpace(fallback.AlbumTitle)
+		value.Artist = strings.TrimSpace(fallback.Artist)
+		if value.Year == "" {
+			value.Year = strings.TrimSpace(fallback.Year)
+		}
+	}
 	return value
 }
 
@@ -154,7 +152,11 @@ func (c *Controller) searchText(ctx context.Context, criteria domain.SearchCrite
 			if hit.SearchScore > ev.textScore {
 				ev.textScore = hit.SearchScore
 			}
-			ev.labels["文字一致"] = true
+			if criteria.AlbumTitle == "" && criteria.Artist != "" {
+				ev.labels["アーティスト一致"] = true
+			} else {
+				ev.labels["文字一致"] = true
+			}
 			if hit.TrackCount == trackCount {
 				ev.labels["曲数一致"] = true
 			}
@@ -386,7 +388,10 @@ func sampleTrackIndices(tracks []domain.LocalTrack, maximum int) []int {
 }
 
 func musicBrainzQueries(criteria domain.SearchCriteria, trackCount int) []string {
-	strict := []string{"release:" + quoteLucene(criteria.AlbumTitle)}
+	var strict []string
+	if criteria.AlbumTitle != "" {
+		strict = append(strict, "release:"+quoteLucene(criteria.AlbumTitle))
+	}
 	if criteria.Artist != "" {
 		strict = append(strict, "artist:"+quoteLucene(criteria.Artist))
 	}
@@ -397,17 +402,22 @@ func musicBrainzQueries(criteria domain.SearchCriteria, trackCount int) []string
 		strict = append(strict, "date:"+quoteLucene(criteria.Year))
 	}
 	queries := []string{strings.Join(strict, " AND ")}
-	withoutStructure := []string{"release:" + quoteLucene(criteria.AlbumTitle)}
+	var withoutStructure []string
+	if criteria.AlbumTitle != "" {
+		withoutStructure = append(withoutStructure, "release:"+quoteLucene(criteria.AlbumTitle))
+	}
 	if criteria.Artist != "" {
 		withoutStructure = append(withoutStructure, "artist:"+quoteLucene(criteria.Artist))
 	}
 	queries = append(queries, strings.Join(withoutStructure, " AND "))
-	queries = append(queries, "release:("+escapeLucene(criteria.AlbumTitle)+")"+func() string {
-		if criteria.Artist != "" {
-			return " AND artist:(" + escapeLucene(criteria.Artist) + ")"
-		}
-		return ""
-	}())
+	var relaxed []string
+	if criteria.AlbumTitle != "" {
+		relaxed = append(relaxed, "release:("+escapeLucene(criteria.AlbumTitle)+")")
+	}
+	if criteria.Artist != "" {
+		relaxed = append(relaxed, "artist:("+escapeLucene(criteria.Artist)+")")
+	}
+	queries = append(queries, strings.Join(relaxed, " AND "))
 	return uniqueStrings(queries)
 }
 

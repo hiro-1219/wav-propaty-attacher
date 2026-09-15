@@ -49,9 +49,13 @@ func ScoreAndAssignWithCriteria(criteria domain.SearchCriteria, locals []domain.
 	}
 	albumText := tokenSimilarity(criteria.AlbumTitle, release.Title)
 	artistText := tokenSimilarity(criteria.Artist, release.AlbumArtist)
-	metadataText := albumText
-	if criteria.Artist != "" {
+	metadataText := 0.0
+	if criteria.AlbumTitle != "" && criteria.Artist != "" {
 		metadataText = .65*albumText + .35*artistText
+	} else if criteria.AlbumTitle != "" {
+		metadataText = albumText
+	} else if criteria.Artist != "" {
+		metadataText = artistText
 	}
 	score := .40*fingerprint + .25*duration + .15*count + .10*metadataText + .10*trackTitles
 	if exact == 0 {
