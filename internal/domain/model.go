@@ -21,6 +21,14 @@ type LocalTrack struct {
 	Fingerprint string
 	RecordingID string
 	Existing    map[string]string
+	TitleHint   string
+	ArtistHint  string
+}
+
+type SearchCriteria struct {
+	AlbumTitle string
+	Artist     string
+	Year       string
 }
 
 type ArtistCredit struct {
@@ -38,15 +46,17 @@ type ReleaseTrack struct {
 }
 
 type Release struct {
-	ID             string
-	ReleaseGroupID string
-	Title          string
-	AlbumArtist    string
-	Date           string
-	Country        string
-	Tracks         []ReleaseTrack
-	CoverURL       string
-	Score          float64
+	ID              string
+	ReleaseGroupID  string
+	Title           string
+	AlbumArtist     string
+	Date            string
+	Country         string
+	Tracks          []ReleaseTrack
+	CoverURL        string
+	Score           float64
+	Evidence        []string
+	FingerprintHits int
 }
 
 type TrackAssignment struct {
@@ -63,6 +73,8 @@ type AlbumJob struct {
 	Assignments []TrackAssignment
 	Cover       []byte
 	CoverMIME   string
+	Suggested   SearchCriteria
+	Warnings    []string
 }
 
 type ExportManifest struct {

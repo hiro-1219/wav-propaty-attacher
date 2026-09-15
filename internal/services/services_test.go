@@ -22,6 +22,9 @@ func TestAcoustIDLookupSendsFingerprintNotAudio(t *testing.T) {
 		if got := r.Form.Get("duration"); got != "181" {
 			t.Errorf("duration=%q", got)
 		}
+		if got := r.Form.Get("meta"); got != "recordingids+releaseids" {
+			t.Errorf("meta=%q", got)
+		}
 		for key := range r.Form {
 			switch key {
 			case "client", "format", "meta", "duration", "fingerprint":
@@ -30,7 +33,7 @@ func TestAcoustIDLookupSendsFingerprintNotAudio(t *testing.T) {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok","results":[{"score":0.98,"recordings":[{"id":"recording-id"}]}]}`))
+		_, _ = w.Write([]byte(`{"status":"ok","results":[{"score":0.98,"recordings":[{"id":"recording-id","releases":[{"id":"release-id"}]}]}]}`))
 	}))
 	defer server.Close()
 
@@ -43,6 +46,27 @@ func TestAcoustIDLookupSendsFingerprintNotAudio(t *testing.T) {
 	}
 	if len(matches) != 1 || matches[0].RecordingID != "recording-id" || matches[0].Score != 0.98 {
 		t.Fatalf("matches=%+v", matches)
+	}
+	if len(matches[0].ReleaseIDs) != 1 || matches[0].ReleaseIDs[0] != "release-id" {
+		t.Fatalf("release IDs=%v", matches[0].ReleaseIDs)
+	}
+}
+
+func TestMusicBrainzSearchReturnsPreliminaryMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"releases":[{"id":"release-id","title":"アルバム","score":97,"track-count":12,"artist-credit":[{"name":"アーティスト"}]}]}`))
+	}))
+	defer server.Close()
+	client := NewMusicBrainz()
+	client.BaseURL = server.URL
+	client.Client = NewRateClient(0, "test")
+	hits, err := client.SearchReleases(context.Background(), `release:"アルバム"`, 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].SearchScore != 97 || hits[0].TrackCount != 12 || hits[0].Artist != "アーティスト" {
+		t.Fatalf("hits=%+v", hits)
 	}
 }
 

@@ -33,18 +33,34 @@
         </button>
         <div id="album-path" class="path-value" title="未選択">未選択</div>
 
-        <label class="field-label" for="query">検索語 <span>省略可</span></label>
-        <input id="query" type="text" placeholder="アルバム名 / アーティスト名">
+        <div class="search-fields">
+          <label class="field-label" for="album-title">アルバム名</label>
+          <input id="album-title" type="text" placeholder="フォルダから自動抽出">
+          <label class="field-label" for="artist">アーティスト</label>
+          <input id="artist" type="text" placeholder="省略可">
+        </div>
 
         <details class="advanced">
-          <summary>音響指紋検索の設定</summary>
+          <summary>詳細検索・音響指紋の設定</summary>
           <div class="advanced-body">
+            <div class="inline-field">
+              <label class="field-label" for="year">発売年</label>
+              <input id="year" type="text" inputmode="numeric" maxlength="4" placeholder="省略可">
+            </div>
             <label class="field-label" for="api-key">AcoustIDアプリケーションキー</label>
             <input id="api-key" type="password" autocomplete="off" placeholder="文字検索だけなら不要">
             <label class="field-label" for="fpcalc-path">fpcalc</label>
             <input id="fpcalc-path" type="text">
             <label class="check-row"><input id="use-fingerprint" type="checkbox"> 指紋と再生秒数の送信に同意する</label>
             <p class="help">指紋は端末内で生成します。WAVそのものはアップロードされません。</p>
+          </div>
+        </details>
+
+        <details class="advanced direct-lookup">
+          <summary>MusicBrainzのURL / MBIDを直接指定</summary>
+          <div class="direct-row">
+            <input id="mbid" type="text" placeholder="Release URL または MBID">
+            <button id="mbid-button" class="mini-button" type="button" data-action="lookup-release">読込</button>
           </div>
         </details>
 

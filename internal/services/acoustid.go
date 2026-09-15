@@ -18,6 +18,7 @@ type AcoustID struct {
 type AcoustIDMatch struct {
 	RecordingID string
 	Score       float64
+	ReleaseIDs  []string
 }
 
 func NewAcoustID(apiKey string) *AcoustID {
@@ -28,13 +29,16 @@ func (a *AcoustID) Lookup(ctx context.Context, fingerprint string, duration int)
 	if a.APIKey == "" {
 		return nil, errors.New("AcoustID APIキーが設定されていません")
 	}
-	form := url.Values{"client": {a.APIKey}, "format": {"json"}, "meta": {"recordingids"}, "duration": {strconv.Itoa(duration)}, "fingerprint": {fingerprint}}
+	form := url.Values{"client": {a.APIKey}, "format": {"json"}, "meta": {"recordingids+releaseids"}, "duration": {strconv.Itoa(duration)}, "fingerprint": {fingerprint}}
 	var response struct {
 		Status  string `json:"status"`
 		Results []struct {
 			Score      float64 `json:"score"`
 			Recordings []struct {
-				ID string `json:"id"`
+				ID       string `json:"id"`
+				Releases []struct {
+					ID string `json:"id"`
+				} `json:"releases"`
 			} `json:"recordings"`
 		} `json:"results"`
 	}
@@ -44,7 +48,11 @@ func (a *AcoustID) Lookup(ctx context.Context, fingerprint string, duration int)
 	var out []AcoustIDMatch
 	for _, result := range response.Results {
 		for _, recording := range result.Recordings {
-			out = append(out, AcoustIDMatch{recording.ID, result.Score})
+			match := AcoustIDMatch{RecordingID: recording.ID, Score: result.Score}
+			for _, release := range recording.Releases {
+				match.ReleaseIDs = append(match.ReleaseIDs, release.ID)
+			}
+			out = append(out, match)
 		}
 	}
 	return out, nil

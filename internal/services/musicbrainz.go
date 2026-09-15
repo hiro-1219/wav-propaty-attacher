@@ -45,6 +45,8 @@ type mbRelease struct {
 	Title        string     `json:"title"`
 	Date         string     `json:"date"`
 	Country      string     `json:"country"`
+	Score        int        `json:"score"`
+	TrackCount   int        `json:"track-count"`
 	ArtistCredit []mbArtist `json:"artist-credit"`
 	Media        []mbMedium `json:"media"`
 	ReleaseGroup struct {
@@ -52,7 +54,27 @@ type mbRelease struct {
 	} `json:"release-group"`
 }
 
+type MusicBrainzSearchHit struct {
+	ID          string
+	Title       string
+	Artist      string
+	TrackCount  int
+	SearchScore int
+}
+
 func (m *MusicBrainz) Search(ctx context.Context, query string, limit int) ([]string, error) {
+	hits, err := m.SearchReleases(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		ids = append(ids, hit.ID)
+	}
+	return ids, nil
+}
+
+func (m *MusicBrainz) SearchReleases(ctx context.Context, query string, limit int) ([]MusicBrainzSearchHit, error) {
 	if limit <= 0 || limit > 25 {
 		limit = 10
 	}
@@ -63,11 +85,11 @@ func (m *MusicBrainz) Search(ctx context.Context, query string, limit int) ([]st
 	if err := m.Client.DoJSON(ctx, http.MethodGet, endpoint, nil, &response); err != nil {
 		return nil, err
 	}
-	ids := make([]string, 0, len(response.Releases))
+	hits := make([]MusicBrainzSearchHit, 0, len(response.Releases))
 	for _, release := range response.Releases {
-		ids = append(ids, release.ID)
+		hits = append(hits, MusicBrainzSearchHit{ID: release.ID, Title: release.Title, Artist: credit(release.ArtistCredit), TrackCount: release.TrackCount, SearchScore: release.Score})
 	}
-	return ids, nil
+	return hits, nil
 }
 
 func (m *MusicBrainz) ForRecording(ctx context.Context, recordingID string) ([]string, error) {

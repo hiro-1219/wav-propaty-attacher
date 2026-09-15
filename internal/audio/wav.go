@@ -262,9 +262,27 @@ func ScanAlbum(root string) ([]domain.LocalTrack, error) {
 			Path: file.path, Relative: file.rel, DiscHint: file.disc, TrackHint: trackHint,
 			Duration: time.Duration(info.Format.Frames) * time.Second / time.Duration(info.Format.SampleRate),
 			Format:   info.Format, AudioSHA256: info.AudioHash, Existing: info.Metadata,
+			TitleHint:  trackTitleHint(filepath.Base(file.path), info.Metadata["title"]),
+			ArtistHint: strings.TrimSpace(info.Metadata["artist"]),
 		})
 	}
 	return tracks, nil
+}
+
+func trackTitleHint(name, tagged string) string {
+	if value := strings.TrimSpace(tagged); value != "" {
+		return value
+	}
+	value := strings.TrimSuffix(name, filepath.Ext(name))
+	value = strings.TrimSpace(value)
+	i := 0
+	for i < len(value) && value[i] >= '0' && value[i] <= '9' {
+		i++
+	}
+	if i > 0 {
+		value = strings.TrimLeft(value[i:], " _.-")
+	}
+	return strings.TrimSpace(value)
 }
 
 func discNumber(name string) (int, bool) {

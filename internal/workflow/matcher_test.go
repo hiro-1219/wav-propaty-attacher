@@ -30,3 +30,21 @@ func TestScoreWithoutFingerprintUsesDurationAndOrder(t *testing.T) {
 		t.Fatalf("assignments=%+v", assignments)
 	}
 }
+
+func TestJapaneseTextSimilarityToleratesEditionSuffix(t *testing.T) {
+	if score := tokenSimilarity("日本語アルバム", "日本語アルバム 初回限定盤"); score < .5 {
+		t.Fatalf("score=%f", score)
+	}
+}
+
+func TestTrackTitlesImproveCandidateScore(t *testing.T) {
+	locals := []domain.LocalTrack{{TitleHint: "青い夜", Duration: 180 * time.Second}}
+	matching := domain.Release{Title: "作品", Tracks: []domain.ReleaseTrack{{Title: "青い夜", LengthMS: 180000}}}
+	other := domain.Release{Title: "作品", Tracks: []domain.ReleaseTrack{{Title: "赤い朝", LengthMS: 180000}}}
+	criteria := domain.SearchCriteria{AlbumTitle: "作品"}
+	good, _ := ScoreAndAssignWithCriteria(criteria, locals, matching)
+	bad, _ := ScoreAndAssignWithCriteria(criteria, locals, other)
+	if good <= bad {
+		t.Fatalf("matching=%f other=%f", good, bad)
+	}
+}

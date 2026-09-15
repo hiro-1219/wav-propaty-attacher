@@ -4,6 +4,7 @@ const state = {
   job: null,
   busy: false,
   root: "",
+  showAllEditions: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -16,7 +17,9 @@ function backend() {
 function settings() {
   return {
     root: state.root,
-    query: elements.query.value.trim(),
+    albumTitle: elements.albumTitle.value.trim(),
+    artist: elements.artist.value.trim(),
+    year: elements.year.value.trim(),
     apiKey: elements.apiKey.value.trim(),
     fpcalcPath: elements.fpcalcPath.value.trim(),
     useFingerprint: elements.useFingerprint.checked,
@@ -75,6 +78,12 @@ function applyJob(job) {
   elements.albumPath.title = state.root || "未選択";
   elements.trackCount.textContent = String((job.tracks || []).length);
   elements.candidateCount.textContent = String((job.candidates || []).length);
+  if (!(job.candidates || []).length) {
+    elements.albumTitle.value = job.suggestedAlbum || "";
+    elements.artist.value = job.suggestedArtist || "";
+    elements.year.value = job.suggestedYear || "";
+    state.showAllEditions = false;
+  }
   renderCandidates();
   renderMappings();
   renderCover();
@@ -92,7 +101,23 @@ function renderCandidates() {
     list.append(message);
     return;
   }
+  if (state.job.warnings && state.job.warnings.length) {
+    const warning = document.createElement("div");
+    warning.className = "search-warning";
+    warning.textContent = state.job.warnings.join(" / ");
+    warning.title = warning.textContent;
+    list.append(warning);
+  }
+  const groupCounts = new Map();
+  let hiddenEditions = 0;
   candidates.forEach((candidate) => {
+    const group = candidate.releaseGroupId || candidate.id;
+    const count = (groupCounts.get(group) || 0) + 1;
+    groupCounts.set(group, count);
+    if (!state.showAllEditions && count > 2) {
+      hiddenEditions++;
+      return;
+    }
     const card = document.createElement("button");
     card.type = "button";
     card.className = "candidate-card" + (candidate.index === state.job.selected ? " selected" : "");
@@ -111,12 +136,28 @@ function renderCandidates() {
     detail.textContent = `${candidate.date || "日付不明"} · ${candidate.tracks.length}曲`;
     const score = document.createElement("span");
     score.className = "score";
-    score.textContent = `${candidate.scorePercent}%`;
+    score.textContent = `${candidate.scorePercent}% · ${candidate.confidence}`;
     meta.append(detail, score);
-    card.append(title, artist, meta);
+    const evidence = document.createElement("div");
+    evidence.className = "evidence-row";
+    (candidate.evidence || []).forEach((label) => {
+      const badge = document.createElement("span");
+      badge.textContent = label === "指紋一致" && candidate.fingerprintHits ? `${label} ${candidate.fingerprintHits}` : label;
+      evidence.append(badge);
+    });
+    card.append(title, artist, meta, evidence);
     card.addEventListener("click", () => selectCandidate(candidate.index));
     list.append(card);
   });
+  if (hiddenEditions > 0) {
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "candidate-card more-editions";
+    more.dataset.action = "more-editions";
+    more.textContent = `盤違いをさらに${hiddenEditions}件表示`;
+    more.addEventListener("click", () => { state.showAllEditions = true; renderCandidates(); });
+    list.append(more);
+  }
 }
 
 function renderMappings() {
@@ -223,7 +264,23 @@ async function search() {
     setStatus("音響指紋検索にはAcoustIDアプリケーションキーが必要です。", "error");
     return;
   }
-  await runTask("アルバム候補を検索しています…", () => backend().Search(settings()), (job) => `${job.candidates.length}件のアルバム候補を取得しました。`);
+  state.showAllEditions = false;
+  await runTask("アルバム候補を検索しています…", () => backend().Search(settings()), (job) => job.selected < 0
+    ? `${job.candidates.length}件の候補があります。一致度を確認して選択してください。`
+    : `${job.candidates.length}件の候補から高信頼のアルバムを選択しました。`);
+}
+
+async function lookupRelease() {
+  const value = elements.mbid.value.trim();
+  if (!state.job || !state.job.tracks.length) {
+    setStatus("先にWAVファイルを読み込んでください。", "error");
+    return;
+  }
+  if (!value) {
+    setStatus("MusicBrainzのRelease URLまたはMBIDを入力してください。", "error");
+    return;
+  }
+  await runTask("指定されたMusicBrainz Releaseを取得しています…", () => backend().LookupRelease(value), "指定Releaseを読み込みました。");
 }
 
 async function selectCandidate(index) {
@@ -278,7 +335,8 @@ async function handleDrop(x, y, paths) {
 
 async function initialise() {
   Object.assign(elements, {
-    albumDrop: $("album-drop"), albumPath: $("album-path"), query: $("query"),
+    albumDrop: $("album-drop"), albumPath: $("album-path"), albumTitle: $("album-title"),
+    artist: $("artist"), year: $("year"), mbid: $("mbid"), mbidButton: $("mbid-button"),
     apiKey: $("api-key"), fpcalcPath: $("fpcalc-path"), useFingerprint: $("use-fingerprint"),
     scanButton: $("scan-button"), searchButton: $("search-button"), trackCount: $("track-count"),
     candidateCount: $("candidate-count"), candidateList: $("candidate-list"), mappingList: $("mapping-list"),
@@ -290,6 +348,7 @@ async function initialise() {
   elements.albumDrop.addEventListener("click", chooseFolder);
   elements.scanButton.addEventListener("click", scan);
   elements.searchButton.addEventListener("click", search);
+  elements.mbidButton.addEventListener("click", lookupRelease);
   elements.coverDrop.addEventListener("click", chooseCover);
   elements.exportButton.addEventListener("click", exportAIFF);
   elements.cancelButton.addEventListener("click", async () => {

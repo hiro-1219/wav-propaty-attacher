@@ -20,7 +20,9 @@ import (
 
 type Settings struct {
 	Root           string `json:"root"`
-	Query          string `json:"query"`
+	AlbumTitle     string `json:"albumTitle"`
+	Artist         string `json:"artist"`
+	Year           string `json:"year"`
 	APIKey         string `json:"apiKey"`
 	FPCalcPath     string `json:"fpcalcPath"`
 	UseFingerprint bool   `json:"useFingerprint"`
@@ -49,14 +51,18 @@ type ReleaseTrackView struct {
 }
 
 type ReleaseView struct {
-	Index        int                `json:"index"`
-	ID           string             `json:"id"`
-	Title        string             `json:"title"`
-	AlbumArtist  string             `json:"albumArtist"`
-	Date         string             `json:"date"`
-	Country      string             `json:"country"`
-	ScorePercent int                `json:"scorePercent"`
-	Tracks       []ReleaseTrackView `json:"tracks"`
+	Index           int                `json:"index"`
+	ID              string             `json:"id"`
+	ReleaseGroupID  string             `json:"releaseGroupId"`
+	Title           string             `json:"title"`
+	AlbumArtist     string             `json:"albumArtist"`
+	Date            string             `json:"date"`
+	Country         string             `json:"country"`
+	ScorePercent    int                `json:"scorePercent"`
+	Confidence      string             `json:"confidence"`
+	Evidence        []string           `json:"evidence"`
+	FingerprintHits int                `json:"fingerprintHits"`
+	Tracks          []ReleaseTrackView `json:"tracks"`
 }
 
 type AssignmentView struct {
@@ -67,14 +73,18 @@ type AssignmentView struct {
 }
 
 type JobView struct {
-	Root         string           `json:"root"`
-	Tracks       []TrackView      `json:"tracks"`
-	Candidates   []ReleaseView    `json:"candidates"`
-	Selected     int              `json:"selected"`
-	Assignments  []AssignmentView `json:"assignments"`
-	CoverDataURL string           `json:"coverDataUrl"`
-	CoverMIME    string           `json:"coverMime"`
-	CoverKiB     int              `json:"coverKiB"`
+	Root            string           `json:"root"`
+	Tracks          []TrackView      `json:"tracks"`
+	Candidates      []ReleaseView    `json:"candidates"`
+	Selected        int              `json:"selected"`
+	Assignments     []AssignmentView `json:"assignments"`
+	CoverDataURL    string           `json:"coverDataUrl"`
+	CoverMIME       string           `json:"coverMime"`
+	CoverKiB        int              `json:"coverKiB"`
+	SuggestedAlbum  string           `json:"suggestedAlbum"`
+	SuggestedArtist string           `json:"suggestedArtist"`
+	SuggestedYear   string           `json:"suggestedYear"`
+	Warnings        []string         `json:"warnings"`
 }
 
 type App struct {
@@ -179,13 +189,31 @@ func (a *App) Search(settings Settings) (JobView, error) {
 	if err != nil {
 		return JobView{}, err
 	}
-	controller := a.makeController(settings)
-	if err := controller.Identify(ctx, job, settings.Query, settings.UseFingerprint); err != nil {
+	controller := a.currentController()
+	a.configureController(controller, settings)
+	criteria := domain.SearchCriteria{AlbumTitle: settings.AlbumTitle, Artist: settings.Artist, Year: settings.Year}
+	if err := controller.Identify(ctx, job, criteria, settings.UseFingerprint); err != nil {
 		return JobView{}, err
 	}
 	a.mu.Lock()
 	a.controller = controller
 	a.mu.Unlock()
+	return viewOf(job), nil
+}
+
+func (a *App) LookupRelease(value string) (JobView, error) {
+	ctx, finish, err := a.begin()
+	if err != nil {
+		return JobView{}, err
+	}
+	defer finish()
+	job, err := a.currentJob()
+	if err != nil {
+		return JobView{}, err
+	}
+	if err := a.currentController().LookupDirect(ctx, job, value); err != nil {
+		return JobView{}, err
+	}
 	return viewOf(job), nil
 }
 
@@ -290,13 +318,19 @@ func (a *App) begin() (context.Context, func(), error) {
 
 func (a *App) makeController(settings Settings) *workflow.Controller {
 	controller := workflow.NewController(strings.TrimSpace(settings.APIKey), strings.TrimSpace(settings.FPCalcPath))
+	a.configureController(controller, settings)
+	return controller
+}
+
+func (a *App) configureController(controller *workflow.Controller, settings Settings) {
+	controller.AcoustID.APIKey = strings.TrimSpace(settings.APIKey)
+	controller.Fingerprinter.Path = strings.TrimSpace(settings.FPCalcPath)
 	controller.Progress = func(message string) {
 		ctx := a.runtimeContext()
 		if ctx != nil {
 			runtime.EventsEmit(ctx, "search:progress", message)
 		}
 	}
-	return controller
 }
 
 func (a *App) currentJob() (*domain.AlbumJob, error) {
@@ -324,12 +358,25 @@ func (a *App) runtimeContext() context.Context {
 }
 
 func viewOf(job *domain.AlbumJob) JobView {
-	view := JobView{Root: job.Root, Selected: job.Selected, CoverMIME: job.CoverMIME}
+	view := JobView{Root: job.Root, Selected: job.Selected, CoverMIME: job.CoverMIME, SuggestedAlbum: job.Suggested.AlbumTitle, SuggestedArtist: job.Suggested.Artist, SuggestedYear: job.Suggested.Year, Warnings: append([]string(nil), job.Warnings...)}
 	for index, track := range job.Tracks {
 		view.Tracks = append(view.Tracks, TrackView{Index: index, Relative: track.Relative, Duration: durationText(track.Duration), DiscHint: track.DiscHint, TrackHint: track.TrackHint})
 	}
 	for index, release := range job.Candidates {
-		candidate := ReleaseView{Index: index, ID: release.ID, Title: release.Title, AlbumArtist: release.AlbumArtist, Date: release.Date, Country: release.Country, ScorePercent: int(release.Score*100 + .5)}
+		score := int(release.Score*100 + .5)
+		if score < 0 {
+			score = 0
+		}
+		if score > 100 {
+			score = 100
+		}
+		confidence := "低"
+		if score >= 75 {
+			confidence = "高"
+		} else if score >= 60 {
+			confidence = "中"
+		}
+		candidate := ReleaseView{Index: index, ID: release.ID, ReleaseGroupID: release.ReleaseGroupID, Title: release.Title, AlbumArtist: release.AlbumArtist, Date: release.Date, Country: release.Country, ScorePercent: score, Confidence: confidence, Evidence: append([]string(nil), release.Evidence...), FingerprintHits: release.FingerprintHits}
 		for trackIndex, track := range release.Tracks {
 			candidate.Tracks = append(candidate.Tracks, ReleaseTrackView{Index: trackIndex, Disc: track.Disc, Position: track.Position, Title: track.Title, Artist: track.Artist, Duration: durationText(time.Duration(track.LengthMS) * time.Millisecond)})
 		}

@@ -11,8 +11,12 @@ import (
 )
 
 func ScoreAndAssign(root string, locals []domain.LocalTrack, release domain.Release) (float64, []domain.TrackAssignment) {
+	return ScoreAndAssignWithCriteria(domain.SearchCriteria{AlbumTitle: filepath.Base(root)}, locals, release)
+}
+
+func ScoreAndAssignWithCriteria(criteria domain.SearchCriteria, locals []domain.LocalTrack, release domain.Release) (float64, []domain.TrackAssignment) {
 	assignments := align(locals, release.Tracks)
-	matched, exact, durationScore, orderScore := 0, 0, 0.0, 0.0
+	matched, exact, durationScore, orderScore, titleScore, titled := 0, 0, 0.0, 0.0, 0.0, 0
 	last := -1
 	for _, assignment := range assignments {
 		if assignment.ReleaseIndex < 0 {
@@ -28,6 +32,10 @@ func ScoreAndAssign(root string, locals []domain.LocalTrack, release domain.Rele
 		if assignment.ReleaseIndex > last {
 			orderScore++
 		}
+		if local.TitleHint != "" {
+			titleScore += tokenSimilarity(local.TitleHint, remote.Title)
+			titled++
+		}
 		last = assignment.ReleaseIndex
 	}
 	denom := math.Max(1, float64(len(locals)))
@@ -35,18 +43,31 @@ func ScoreAndAssign(root string, locals []domain.LocalTrack, release domain.Rele
 	duration := durationScore / denom
 	count := float64(min(len(locals), len(release.Tracks))) / float64(max(1, max(len(locals), len(release.Tracks))))
 	order := orderScore / denom
-	text := tokenSimilarity(filepath.Base(root), release.Title)
-	score := .50*fingerprint + .20*duration + .15*count + .10*order + .05*text
+	trackTitles := 0.0
+	if titled > 0 {
+		trackTitles = titleScore / float64(titled)
+	}
+	albumText := tokenSimilarity(criteria.AlbumTitle, release.Title)
+	artistText := tokenSimilarity(criteria.Artist, release.AlbumArtist)
+	metadataText := albumText
+	if criteria.Artist != "" {
+		metadataText = .65*albumText + .35*artistText
+	}
+	score := .40*fingerprint + .25*duration + .15*count + .10*metadataText + .10*trackTitles
 	if exact == 0 {
-		score = .45*duration + .30*count + .15*order + .10*text
+		score = .35*duration + .25*count + .20*trackTitles + .15*metadataText + .05*order
 	}
 	return score, assignments
 }
 
 func Rank(root string, locals []domain.LocalTrack, releases []domain.Release) ([]domain.Release, map[string][]domain.TrackAssignment) {
+	return RankWithCriteria(domain.SearchCriteria{AlbumTitle: filepath.Base(root)}, locals, releases)
+}
+
+func RankWithCriteria(criteria domain.SearchCriteria, locals []domain.LocalTrack, releases []domain.Release) ([]domain.Release, map[string][]domain.TrackAssignment) {
 	mapping := map[string][]domain.TrackAssignment{}
 	for i := range releases {
-		releases[i].Score, mapping[releases[i].ID] = ScoreAndAssign(root, locals, releases[i])
+		releases[i].Score, mapping[releases[i].ID] = ScoreAndAssignWithCriteria(criteria, locals, releases[i])
 	}
 	sort.SliceStable(releases, func(i, j int) bool { return releases[i].Score > releases[j].Score })
 	return releases, mapping
@@ -109,6 +130,14 @@ func align(locals []domain.LocalTrack, remote []domain.ReleaseTrack) []domain.Tr
 }
 
 func tokenSimilarity(a, b string) float64 {
+	normalize := func(s string) []rune {
+		return []rune(strings.Map(func(r rune) rune {
+			if unicode.IsLetter(r) || unicode.IsDigit(r) {
+				return unicode.ToLower(r)
+			}
+			return -1
+		}, s))
+	}
 	tokens := func(s string) map[string]bool {
 		fields := strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
 		out := map[string]bool{}
@@ -132,10 +161,39 @@ func tokenSimilarity(a, b string) float64 {
 			union++
 		}
 	}
-	if union == 0 {
-		return 0
+	tokenScore := 0.0
+	if union > 0 {
+		tokenScore = float64(intersection) / float64(union)
 	}
-	return float64(intersection) / float64(union)
+	aRunes, bRunes := normalize(a), normalize(b)
+	if len(aRunes) == 0 || len(bRunes) == 0 {
+		return tokenScore
+	}
+	if string(aRunes) == string(bRunes) {
+		return 1
+	}
+	grams := func(value []rune) map[string]bool {
+		out := map[string]bool{}
+		if len(value) == 1 {
+			out[string(value)] = true
+			return out
+		}
+		for i := 0; i+1 < len(value); i++ {
+			out[string(value[i:i+2])] = true
+		}
+		return out
+	}
+	ag, bg := grams(aRunes), grams(bRunes)
+	gramUnion, gramIntersection := len(ag), 0
+	for value := range bg {
+		if ag[value] {
+			gramIntersection++
+		} else {
+			gramUnion++
+		}
+	}
+	gramScore := float64(gramIntersection) / float64(max(1, gramUnion))
+	return math.Max(tokenScore, gramScore)
 }
 
 func min(a, b int) int {
