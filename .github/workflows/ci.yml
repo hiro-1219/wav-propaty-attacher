@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     strategy:
@@ -11,6 +14,8 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      BUILD_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'development' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v6
@@ -32,7 +37,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          wails build -trimpath -webview2 error
+          wails build -trimpath -webview2 error -ldflags "-X wav-property-attacher/internal/workflow.AppVersion=$env:BUILD_VERSION"
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item build/bin/wav-property-attacher.exe dist/wav-property-attacher.exe
       - name: Build (macOS/Linux)
@@ -42,7 +47,7 @@ jobs:
           mkdir -p dist
           tags=""
           if [ "${{ runner.os }}" = "Linux" ]; then tags="-tags webkit2_41"; fi
-          wails build -trimpath $tags
+          wails build -trimpath $tags -ldflags "-X wav-property-attacher/internal/workflow.AppVersion=$BUILD_VERSION"
           cp -R build/bin/. dist/
       - name: Bundle fpcalc (Windows)
         if: runner.os == 'Windows'
@@ -90,3 +95,84 @@ jobs:
         with:
           name: wav-property-attacher-${{ runner.os }}-${{ runner.arch }}
           path: dist/
+      - name: Package release asset (Windows)
+        if: startsWith(github.ref, 'refs/tags/v') && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $arch = switch ($env:RUNNER_ARCH) {
+            'X64' { 'x86_64' }
+            'ARM64' { 'arm64' }
+            default { $env:RUNNER_ARCH.ToLowerInvariant() }
+          }
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          $asset = "release-assets/wav-property-attacher-$env:GITHUB_REF_NAME-windows-$arch.zip"
+          Compress-Archive -Path dist/* -DestinationPath $asset
+      - name: Package release asset (macOS/Linux)
+        if: startsWith(github.ref, 'refs/tags/v') && runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$RUNNER_ARCH" in
+            X64) arch="x86_64" ;;
+            ARM64) arch="arm64" ;;
+            *) arch="$(printf '%s' "$RUNNER_ARCH" | tr '[:upper:]' '[:lower:]')" ;;
+          esac
+          case "${{ runner.os }}" in
+            macOS) platform="macos" ;;
+            Linux) platform="linux" ;;
+          esac
+          mkdir -p release-assets
+          asset="release-assets/wav-property-attacher-${GITHUB_REF_NAME}-${platform}-${arch}.tar.gz"
+          tar -C dist -czf "$asset" .
+      - name: Upload release asset
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-asset-${{ runner.os }}-${{ runner.arch }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Validate version tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release tag: $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-asset-*
+          path: release-assets
+          merge-multiple: true
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          sha256sum *.zip *.tar.gz | sort -k2 > SHA256SUMS.txt
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release-assets/* \
+              --verify-tag \
+              --generate-notes \
+              --title "WAV Property Attacher $GITHUB_REF_NAME"
+          fi

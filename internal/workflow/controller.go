@@ -19,7 +19,7 @@ import (
 	"wav-property-attacher/internal/services"
 )
 
-const AppVersion = "0.1.0"
+var AppVersion = "0.1.0"
 
 type Controller struct {
 	Fingerprinter services.FPCalc

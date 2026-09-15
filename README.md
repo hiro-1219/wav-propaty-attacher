@@ -51,6 +51,21 @@ WebView2 Runtimeが必要ですが、Windows 11には通常インストールさ
 詳細は[Wailsのインストール手順](https://wails.io/docs/gettingstarted/installation/)を
 参照してください。
 
+## リリース
+
+`vX.Y.Z`形式のタグをpushすると、GitHub ActionsがWindows、macOS、Linux版を
+ビルドし、`fpcalc`とライセンスを含むアーカイブをGitHub Releaseへ自動公開します。
+リリースノートはGitHubが自動生成し、各アーカイブを検証する
+`SHA256SUMS.txt`も添付されます。
+
+```powershell
+git tag -a v0.2.0 -m "Release v0.2.0"
+git push origin v0.2.0
+```
+
+アプリ内のバージョン表記にはタグ名が埋め込まれます。ブランチやPull Requestの
+通常CIでは、従来どおり各OSのビルドをActionsのArtifactとして確認できます。
+
 ### fpcalc
 
 音響指紋検索にはChromaprintの`fpcalc`が必要です。CIの配布成果物には、
