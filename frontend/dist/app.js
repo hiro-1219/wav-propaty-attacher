@@ -125,6 +125,28 @@ function renderCandidates() {
     card.dataset.action = "candidate";
     card.disabled = state.busy;
 
+    const visual = document.createElement("div");
+    visual.className = "candidate-cover";
+    const coverPlaceholder = document.createElement("span");
+    coverPlaceholder.textContent = "♪";
+    const cover = document.createElement("img");
+    cover.alt = `${candidate.title || "アルバム"}のジャケット`;
+    cover.loading = "lazy";
+    cover.decoding = "async";
+    cover.referrerPolicy = "no-referrer";
+    cover.hidden = true;
+    const coverSource = candidate.index === state.job.selected && state.job.coverDataUrl
+      ? state.job.coverDataUrl : candidate.coverThumbnail;
+    if (coverSource) {
+      cover.addEventListener("load", () => { cover.hidden = false; coverPlaceholder.hidden = true; });
+      cover.addEventListener("error", () => { cover.hidden = true; coverPlaceholder.hidden = false; });
+      cover.src = coverSource;
+    }
+    visual.append(cover, coverPlaceholder);
+
+    const content = document.createElement("div");
+    content.className = "candidate-content";
+
     const title = document.createElement("div");
     title.className = "candidate-title";
     title.textContent = candidate.title || "タイトル不明";
@@ -146,7 +168,8 @@ function renderCandidates() {
       badge.textContent = label === "指紋一致" && candidate.fingerprintHits ? `${label} ${candidate.fingerprintHits}` : label;
       evidence.append(badge);
     });
-    card.append(title, artist, meta, evidence);
+    content.append(title, artist, meta, evidence);
+    card.append(visual, content);
     card.addEventListener("click", () => selectCandidate(candidate.index));
     list.append(card);
   });

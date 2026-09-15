@@ -61,6 +61,14 @@ func TestViewDoesNotExposeFingerprint(t *testing.T) {
 	}
 }
 
+func TestViewIncludesCandidateCoverThumbnail(t *testing.T) {
+	job := &domain.AlbumJob{Candidates: []domain.Release{{ID: "release-id", Title: "Album"}}, Selected: -1}
+	view := viewOf(job)
+	if len(view.Candidates) != 1 || view.Candidates[0].CoverThumbnail != "https://coverartarchive.org/release/release-id/front-250" {
+		t.Fatalf("candidates=%+v", view.Candidates)
+	}
+}
+
 func TestSetAssignment(t *testing.T) {
 	app := NewApp()
 	app.job = &domain.AlbumJob{

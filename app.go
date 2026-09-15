@@ -71,6 +71,7 @@ type ReleaseView struct {
 	Confidence      string             `json:"confidence"`
 	Evidence        []string           `json:"evidence"`
 	FingerprintHits int                `json:"fingerprintHits"`
+	CoverThumbnail  string             `json:"coverThumbnail"`
 	Tracks          []ReleaseTrackView `json:"tracks"`
 }
 
@@ -454,7 +455,7 @@ func viewOf(job *domain.AlbumJob) JobView {
 		} else if score >= 60 {
 			confidence = "中"
 		}
-		candidate := ReleaseView{Index: index, ID: release.ID, ReleaseGroupID: release.ReleaseGroupID, Title: release.Title, AlbumArtist: release.AlbumArtist, Date: release.Date, Country: release.Country, ScorePercent: score, Confidence: confidence, Evidence: append([]string(nil), release.Evidence...), FingerprintHits: release.FingerprintHits}
+		candidate := ReleaseView{Index: index, ID: release.ID, ReleaseGroupID: release.ReleaseGroupID, Title: release.Title, AlbumArtist: release.AlbumArtist, Date: release.Date, Country: release.Country, ScorePercent: score, Confidence: confidence, Evidence: append([]string(nil), release.Evidence...), FingerprintHits: release.FingerprintHits, CoverThumbnail: "https://coverartarchive.org/release/" + url.PathEscape(release.ID) + "/front-250"}
 		for trackIndex, track := range release.Tracks {
 			candidate.Tracks = append(candidate.Tracks, ReleaseTrackView{Index: trackIndex, Disc: track.Disc, Position: track.Position, Title: track.Title, Artist: track.Artist, Duration: durationText(time.Duration(track.LengthMS) * time.Millisecond)})
 		}
